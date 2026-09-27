@@ -13,6 +13,7 @@ class LayoutDesignerWidget extends StatefulWidget {
   final LayoutDefinitionModel initialLayout;
   final VoidCallback onSaved;
   final VoidCallback? onAutoSaveDirty;
+  final ValueChanged<LayoutDefinitionModel>? onLayoutChanged;
   final LayoutTool activeTool;
 
   const LayoutDesignerWidget({
@@ -22,6 +23,7 @@ class LayoutDesignerWidget extends StatefulWidget {
     required this.initialLayout,
     required this.onSaved,
     this.onAutoSaveDirty,
+    this.onLayoutChanged,
     this.activeTool = LayoutTool.pointer,
   });
 
@@ -45,8 +47,41 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
   /// Mark the layout as having unsaved changes and schedule a debounced save.
   void _markLayoutDirty() {
     _autoSaveTimer?.cancel();
+    widget.onLayoutChanged?.call(_layout);
     setState(() => _autoSaveStatus = _LayoutSaveStatus.dirty);
     _autoSaveTimer = Timer(_autoSaveDelay, _performAutoSave);
+  }
+
+  /// Explicitly commit any pending layout changes, execute API persistence, and notify listeners.
+  Future<LayoutDefinitionModel> commitAndSave() async {
+    _autoSaveTimer?.cancel();
+    final newName = _nameCtrl.text.trim().isEmpty ? _layout.name : _nameCtrl.text.trim();
+    _layout = _layout.copyWith(name: newName);
+
+    try {
+      if (_isPersisted) {
+        await widget.apiClient.updateLayout(
+          _layout.id,
+          _layout.name,
+          _layout.toJson(),
+        );
+      } else {
+        final created = await widget.apiClient.createLayout(
+          _layout.name,
+          toId: widget.table.id,
+          definition: _layout.toJson(),
+        );
+        _layout = _layout.copyWith(id: created.id);
+        _isPersisted = true;
+      }
+      widget.onLayoutChanged?.call(_layout);
+      widget.onSaved();
+      widget.onAutoSaveDirty?.call();
+      if (mounted) setState(() => _autoSaveStatus = _LayoutSaveStatus.saved);
+    } catch (_) {
+      widget.onLayoutChanged?.call(_layout);
+    }
+    return _layout;
   }
 
   /// Silent background save to the API — does NOT show a success snackbar.
@@ -75,6 +110,7 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
 
       if (mounted) {
         setState(() => _autoSaveStatus = _LayoutSaveStatus.saved);
+        widget.onLayoutChanged?.call(_layout);
         widget.onAutoSaveDirty?.call();
       }
     } catch (_) {
@@ -115,6 +151,12 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
   @override
   void dispose() {
     _autoSaveTimer?.cancel();
+    if (_autoSaveStatus == _LayoutSaveStatus.dirty) {
+      widget.onLayoutChanged?.call(_layout);
+      if (_isPersisted) {
+        widget.apiClient.updateLayout(_layout.id, _layout.name, _layout.toJson()).catchError((_) => null as LayoutModel);
+      }
+    }
     _nameCtrl.dispose();
     super.dispose();
   }

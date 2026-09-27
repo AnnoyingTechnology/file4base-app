@@ -9,6 +9,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.16] - 2026-09-25
+
+### Added
+- **Table Operations in Schema Manager (`File > Manage > Database > Tables`)**:
+  - Added dedicated action buttons for each table row in `ManageDatabaseDialog`:
+    - **Fields Shortcut (`Icons.view_column_outlined`)**: Quick navigation to inspect and manage fields for the selected table.
+    - **Rename Table (`Icons.edit_outlined`)**: Dialog allowing editing of human-readable display names with immediate schema synchronization.
+    - **Duplicate Table (`Icons.copy_outlined`)**: Creates a clone of table definitions including non-primary-key columns, field types, and calculation formulas with automatic `_copy` naming.
+    - **Empty Table (`Icons.cleaning_services_outlined`)**: Truncates all row data from the physical table while preserving schema structure, with safety confirmation prompt.
+    - **Delete Table (`Icons.delete_outline`)**: Permanently drops the physical database table and cascades removal across system catalogs (`sys_tables`, `sys_columns`, `sys_table_occurrences`), with strict confirmation dialog.
+- **Backend Table REST APIs**:
+  - `DELETE /api/v1/schemas/tables/{id}`: Drops physical table and cleans up catalog entries.
+  - `PUT /api/v1/schemas/tables/{id}/rename`: Updates table display name.
+  - `POST /api/v1/schemas/tables/{id}/duplicate`: Clones table schema structure.
+  - `POST /api/v1/schemas/tables/{id}/truncate`: Deletes all data rows from the target table.
+- **Docker Compose Custom Volume Names**:
+  - Configured explicit custom volume names in `docker-compose.yml`:
+    - `file4base-postgres-data` for PostgreSQL persistence.
+    - `file4base-mariadb-data` for MariaDB profile persistence.
+    - `file4base-net` for the bridge network.
+  - Prevents volume orphaning or duplication when cloning into different directory names or running with custom project flags.
+  - Migrated existing local data from legacy auto-prefixed volume `file4base-app_postgres_data` to `file4base-postgres-data`.
+- **Layout Unification Across All Operational Modes (Browse, Find, Layout, Preview)**:
+  - **Layout Mode (Modo Presentación)**: Added `commitAndSave()` and `onLayoutChanged` in `LayoutDesignerWidgetState` so layout changes are committed and synced to `_activeLayout` in `main.dart` and persisted via API immediately on switching modes, eliminating debounce timer loss.
+  - **Browse Mode (Modo Hojear)**: Active layout is rendered in Form view with real-time bound record values. Even when a table has 0 records, the designed layout canvas is preserved with interactive click-to-create fields and a top banner with `[Create First Record]`.
+  - **Find Mode (Modo Buscar)**: Renders the active layout canvas with criteria input fields and query operators (`*`, `...`, `=`, `==`, `!`, `>`, `<`), enabling visual query design directly on the layout.
+  - **Preview Mode (Modo Vista previa)**: Replaced mock tabular view with `_buildLayoutPreviewCanvas`, rendering the exact designed layout objects (labels, bound fields, buttons, portals, shapes) on a simulated sheet of paper honoring margins, paper size, orientation, and record pagination.
+  - Added automated widget tests in `client/test/layout_unification_test.dart` validating layout rendering in Browse, Find, and Preview modes.
+
 ## [0.4.15] - 2026-09-25
 
 ### Added

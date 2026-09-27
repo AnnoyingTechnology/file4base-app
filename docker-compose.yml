@@ -90,8 +90,11 @@ services:
 
 volumes:
   postgres_data:
+    name: file4base-postgres-data
   mariadb_data:
+    name: file4base-mariadb-data
 
 networks:
   file4base-net:
+    name: file4base-net
     driver: bridge

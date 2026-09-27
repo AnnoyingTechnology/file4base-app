@@ -540,7 +540,25 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
     }
   }
 
-  void _changeMode(OperationalMode newMode) {
+  Future<void> _changeMode(OperationalMode newMode) async {
+    final currentMode = ref.read(operationalModeProvider);
+    if (currentMode == newMode) return;
+
+    // If leaving Layout Mode, ensure any pending modifications are committed and saved
+    if (currentMode == OperationalMode.layout) {
+      final designer = _layoutDesignerKey.currentState;
+      if (designer != null) {
+        try {
+          final savedLayout = await designer.commitAndSave();
+          if (mounted) {
+            setState(() {
+              _activeLayout = savedLayout;
+            });
+          }
+        } catch (_) {}
+      }
+    }
+
     if (newMode == OperationalMode.layout && _currentUser != null && _currentUser!.role == 'user') {
       final activeId = _activeLayout?.id ?? '';
       final perm = _userPermissions[activeId] ?? 'read_write';
@@ -1626,13 +1644,16 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                 _selectedTable!.displayName,
                 _selectedTable!.columns.map((c) => c.name).toList(),
               ),
+          onLayoutChanged: (updated) {
+            _activeLayout = updated;
+          },
           onSaved: () => _loadTables(targetLayoutId: _activeLayout?.id),
           onAutoSaveDirty: AutoSaveService.instance.markDirty,
           activeTool: _activeLayoutTool,
         );
       case OperationalMode.preview:
         return LayoutPreviewWidget(
-          key: ValueKey('preview_${_selectedTable!.id}_${_activeLayout?.id}'),
+          key: ValueKey('preview_${_selectedTable!.id}_${_activeLayout?.id}_${_activeLayout?.name}_${_activeLayout?.objects.length}'),
           table: _selectedTable!,
           apiClient: client,
           layout: _activeLayout ??

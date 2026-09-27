@@ -194,8 +194,10 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> {
     super.didUpdateWidget(oldWidget);
     final columnsChanged = oldWidget.table.columns.length != widget.table.columns.length ||
         !_sameColumns(oldWidget.table.columns, widget.table.columns);
-    final layoutChanged = oldWidget.layout?.id != widget.layout?.id ||
-        oldWidget.layout?.objects.length != widget.layout?.objects.length;
+    final layoutChanged = oldWidget.layout != widget.layout ||
+        oldWidget.layout?.id != widget.layout?.id ||
+        oldWidget.layout?.objects.length != widget.layout?.objects.length ||
+        oldWidget.mode != widget.mode;
     if (oldWidget.table.id != widget.table.id || columnsChanged || layoutChanged) {
       _initFindControllers();
       _rebuildFieldControllers();
@@ -423,21 +425,58 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> {
 
   @override
   Widget build(BuildContext context) {
+    final hasCustomLayoutForm = widget.layout != null &&
+        widget.layout!.objects.isNotEmpty &&
+        _viewMode == 'form';
+
+    Widget content;
+    if (_isLoading) {
+      content = const Center(child: CircularProgressIndicator());
+    } else if (widget.mode == OperationalMode.find) {
+      content = _buildFindModeForm();
+    } else if (hasCustomLayoutForm) {
+      content = _buildLayoutCanvasView(widget.layout!, isFindMode: false);
+    } else if (_error != null) {
+      content = Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.error_outline, size: 48, color: Colors.red),
+            const SizedBox(height: 12),
+            Text('Error: $_error', style: const TextStyle(color: Colors.red)),
+            const SizedBox(height: 12),
+            FilledButton.icon(
+              icon: const Icon(Icons.refresh),
+              label: const Text('Retry'),
+              onPressed: _fetchRecords,
+            ),
+          ],
+        ),
+      );
+    } else if (_records.isEmpty) {
+      content = _buildEmptyState();
+    } else {
+      content = _buildBrowseModeContent();
+    }
+
     return Column(
       children: [
         _buildRecordToolbar(),
+        if (_error != null && hasCustomLayoutForm)
+          MaterialBanner(
+            content: Text('Could not load records: $_error', style: const TextStyle(fontSize: 12)),
+            leading: const Icon(Icons.warning_amber, color: Colors.orange, size: 20),
+            backgroundColor: Colors.amber.shade50,
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+            actions: [
+              TextButton(
+                onPressed: _fetchRecords,
+                child: const Text('Retry', style: TextStyle(fontSize: 12)),
+              ),
+            ],
+          ),
         const Divider(height: 1),
-        Expanded(
-          child: _isLoading
-              ? const Center(child: CircularProgressIndicator())
-              : _error != null
-                  ? Center(child: Text('Error: $_error', style: const TextStyle(color: Colors.red)))
-                  : widget.mode == OperationalMode.find
-                      ? _buildFindModeForm()
-                      : _records.isEmpty
-                          ? _buildEmptyState()
-                          : _buildBrowseModeContent(),
-        ),
+        Expanded(child: content),
       ],
     );
   }
@@ -729,14 +768,29 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> {
                       color: const Color(0xFF1E88E5),
                     ),
                     const SizedBox(width: 8),
-                    Text(
-                      isFindMode
-                          ? 'Find Mode on "${layout.name}" • Enter criteria in fields and press Perform Find'
-                          : '${widget.table.displayName} • ${layout.name} • Record ${_records.isNotEmpty ? _currentIndex + 1 : 0} of ${_records.length}',
-                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                    Expanded(
+                      child: Text(
+                        isFindMode
+                            ? 'Find Mode on "${layout.name}" • Enter criteria in fields and press Perform Find'
+                            : _records.isEmpty
+                                ? '${widget.table.displayName} • ${layout.name} • (0 records in table)'
+                                : '${widget.table.displayName} • ${layout.name} • Record ${_currentIndex + 1} of ${_records.length}',
+                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                        overflow: TextOverflow.ellipsis,
+                      ),
                     ),
-                    const Spacer(),
-                    if (!isFindMode)
+                    const SizedBox(width: 8),
+                    if (!isFindMode && _records.isEmpty)
+                      FilledButton.icon(
+                        style: FilledButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                          minimumSize: const Size(0, 28),
+                        ),
+                        icon: const Icon(Icons.add, size: 14),
+                        label: const Text('Create First Record', style: TextStyle(fontSize: 11)),
+                        onPressed: _createNewRecord,
+                      )
+                    else if (!isFindMode)
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                         decoration: BoxDecoration(
@@ -880,6 +934,32 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> {
             ),
             onTap: () => setState(() => _lastFocusedFindField = col.name),
             onSubmitted: (_) => _performFind(),
+          );
+        }
+
+        if (_records.isEmpty) {
+          return InkWell(
+            onTap: _createNewRecord,
+            borderRadius: BorderRadius.circular(obj.style.cornerRadius),
+            child: IgnorePointer(
+              child: TextField(
+                textAlign: _parseTextAlign(obj.style.textAlign),
+                style: TextStyle(
+                  fontSize: obj.style.fontSize > 0 ? obj.style.fontSize : 13,
+                ),
+                decoration: InputDecoration(
+                  isDense: true,
+                  hintText: 'Click to create record & enter data...',
+                  hintStyle: TextStyle(fontSize: 10.5, fontStyle: FontStyle.italic, color: Colors.grey.shade400),
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                  fillColor: obj.style.fillColor != null ? _parseColor(obj.style.fillColor!) : null,
+                  filled: obj.style.fillColor != null,
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(obj.style.cornerRadius),
+                  ),
+                ),
+              ),
+            ),
           );
         }
 

@@ -173,6 +173,43 @@ Returns created `TableMetadata`.
 
 ---
 
+### `DELETE /api/v1/schemas/tables/{id}`
+Permanently drops the physical database table and deletes its catalog records in `sys_tables`, cascading to columns and table occurrences.
+
+#### Response `204 No Content`
+
+---
+
+### `PUT /api/v1/schemas/tables/{id}/rename`
+Updates the display name of an existing table.
+
+#### Request Body
+```json
+{
+  "display_name": "Clients"
+}
+```
+
+#### Response `200 OK`
+Returns updated `TableMetadata`.
+
+---
+
+### `POST /api/v1/schemas/tables/{id}/duplicate`
+Duplicates a table structure (columns and options, without row data) with an auto-generated unique name.
+
+#### Response `201 Created`
+Returns duplicated `TableMetadata`.
+
+---
+
+### `POST /api/v1/schemas/tables/{id}/truncate`
+Permanently empties all rows and data from the table while preserving its schema structure and columns.
+
+#### Response `204 No Content`
+
+---
+
 ### `POST /api/v1/schemas/tables/{id}/columns`
 Adds a new column to the specified table, executing physical DDL via the active DBAL dialect.
 
