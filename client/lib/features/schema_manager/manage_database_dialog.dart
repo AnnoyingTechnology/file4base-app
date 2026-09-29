@@ -30,6 +30,7 @@ class _ManageDatabaseDialogState extends ConsumerState<ManageDatabaseDialog>
   TableModel? _selectedTable;
   bool _isLoading = true;
   String? _errorMessage;
+  String _tableSearchFilter = '';
 
   @override
   void initState() {
@@ -509,28 +510,33 @@ class _ManageDatabaseDialogState extends ConsumerState<ManageDatabaseDialog>
                 Tab(icon: Icon(Icons.hub), text: 'Relationships Graph'),
               ],
             ),
+            if (_errorMessage != null)
+              Container(
+                color: Colors.red.shade50,
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                child: Row(
+                  children: [
+                    const Icon(Icons.error_outline, size: 18, color: Colors.red),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text('Error loading schema: $_errorMessage',
+                          style: const TextStyle(fontSize: 12, color: Colors.red)),
+                    ),
+                    TextButton(onPressed: _loadTables, child: const Text('Retry')),
+                  ],
+                ),
+              ),
             Expanded(
               child: _isLoading
                   ? const Center(child: CircularProgressIndicator())
-                  : _errorMessage != null
-                      ? Center(
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text('Error: $_errorMessage', style: const TextStyle(color: Colors.red)),
-                              const SizedBox(height: 12),
-                              FilledButton(onPressed: _loadTables, child: const Text('Retry')),
-                            ],
-                          ),
-                        )
-                      : TabBarView(
-                          controller: _tabController,
-                          children: [
-                            _buildTablesTab(),
-                            _buildFieldsTab(),
-                            _buildRelationshipsGraphTab(),
-                          ],
-                        ),
+                  : TabBarView(
+                      controller: _tabController,
+                      children: [
+                        _buildTablesTab(),
+                        _buildFieldsTab(),
+                        _buildRelationshipsGraphTab(),
+                      ],
+                    ),
             ),
           ],
         ),
@@ -538,99 +544,349 @@ class _ManageDatabaseDialogState extends ConsumerState<ManageDatabaseDialog>
     );
   }
 
-  Widget _buildTablesTab() {
-    return Column(
-      children: [
-        Padding(
-          padding: const EdgeInsets.all(12.0),
+  Future<void> _showTableContextMenu(Offset position, TableModel tbl) async {
+    setState(() => _selectedTable = tbl);
+    final selected = await showMenu<String>(
+      context: context,
+      position: RelativeRect.fromLTRB(position.dx, position.dy, position.dx + 1, position.dy + 1),
+      items: [
+        const PopupMenuItem(
+          value: 'fields',
           child: Row(
             children: [
-              FilledButton.icon(
-                icon: const Icon(Icons.add),
-                label: const Text('Create Table...'),
-                onPressed: _showNewTableDialog,
-              ),
-              const SizedBox(width: 8),
-              OutlinedButton.icon(
-                icon: const Icon(Icons.refresh),
-                label: const Text('Refresh'),
-                onPressed: _loadTables,
-              ),
-              const Spacer(),
-              Text('${_tables.length} tables in database', style: const TextStyle(fontSize: 12)),
+              Icon(Icons.view_column, size: 18, color: Colors.blue),
+              SizedBox(width: 8),
+              Text('Manage Fields'),
             ],
           ),
         ),
-        const Divider(height: 1),
-        Expanded(
-          child: ListView.separated(
-            itemCount: _tables.length,
-            separatorBuilder: (_, __) => const Divider(height: 1),
-            itemBuilder: (context, idx) {
-              final tbl = _tables[idx];
-              final isSelected = tbl.id == _selectedTable?.id;
-              return ListTile(
-                selected: isSelected,
-                leading: const Icon(Icons.table_view),
-                title: Text(tbl.displayName, style: const TextStyle(fontWeight: FontWeight.w600)),
-                subtitle: Text('SQL Table: ${tbl.name} • ${tbl.columns.length} columns'),
-                onTap: () => setState(() => _selectedTable = tbl),
-                trailing: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    // Inspect Fields shortcut
-                    Tooltip(
-                      message: 'Inspect Fields',
-                      child: TextButton.icon(
-                        icon: const Icon(Icons.view_column_outlined, size: 15),
-                        label: const Text('Fields', style: TextStyle(fontSize: 12)),
-                        style: TextButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                          visualDensity: VisualDensity.compact,
-                        ),
-                        onPressed: () {
-                          setState(() => _selectedTable = tbl);
-                          _tabController.animateTo(1);
-                        },
-                      ),
+        const PopupMenuDivider(),
+        const PopupMenuItem(
+          value: 'rename',
+          child: Row(
+            children: [
+              Icon(Icons.edit_outlined, size: 18),
+              SizedBox(width: 8),
+              Text('Rename Table...'),
+            ],
+          ),
+        ),
+        const PopupMenuItem(
+          value: 'duplicate',
+          child: Row(
+            children: [
+              Icon(Icons.copy_outlined, size: 18),
+              SizedBox(width: 8),
+              Text('Duplicate Table'),
+            ],
+          ),
+        ),
+        const PopupMenuItem(
+          value: 'truncate',
+          child: Row(
+            children: [
+              Icon(Icons.cleaning_services_outlined, size: 18, color: Colors.orange),
+              SizedBox(width: 8),
+              Text('Empty Table (Truncate)...'),
+            ],
+          ),
+        ),
+        const PopupMenuDivider(),
+        const PopupMenuItem(
+          value: 'delete',
+          child: Row(
+            children: [
+              Icon(Icons.delete_outline, size: 18, color: Colors.red),
+              SizedBox(width: 8),
+              Text('Delete Table...', style: TextStyle(color: Colors.red)),
+            ],
+          ),
+        ),
+      ],
+    );
+
+    if (selected == 'fields') {
+      _tabController.animateTo(1);
+    } else if (selected == 'rename') {
+      _showRenameTableDialog(tbl);
+    } else if (selected == 'duplicate') {
+      _showDuplicateTableDialog(tbl);
+    } else if (selected == 'truncate') {
+      _showTruncateTableDialog(tbl);
+    } else if (selected == 'delete') {
+      _showDeleteTableDialog(tbl);
+    }
+  }
+
+  Widget _buildTablesTab() {
+    final filteredTables = _tableSearchFilter.trim().isEmpty
+        ? _tables
+        : _tables.where((t) =>
+            t.displayName.toLowerCase().contains(_tableSearchFilter.toLowerCase()) ||
+            t.name.toLowerCase().contains(_tableSearchFilter.toLowerCase())).toList();
+
+    return Column(
+      children: [
+        // Top Toolbar: Search filter, Table count, Refresh, and Create Table
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 10.0),
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                SizedBox(
+                  width: 260,
+                  child: TextField(
+                    decoration: InputDecoration(
+                      hintText: 'Filter tables...',
+                      prefixIcon: const Icon(Icons.search, size: 18),
+                      isDense: true,
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
                     ),
-                    const SizedBox(width: 4),
-                    const VerticalDivider(width: 1, indent: 8, endIndent: 8),
-                    const SizedBox(width: 4),
-                    // Rename
-                    IconButton(
-                      icon: const Icon(Icons.edit_outlined, size: 18),
-                      tooltip: 'Rename Table',
-                      visualDensity: VisualDensity.compact,
-                      onPressed: () => _showRenameTableDialog(tbl),
-                    ),
-                    // Duplicate
-                    IconButton(
-                      icon: const Icon(Icons.copy_outlined, size: 18),
-                      tooltip: 'Duplicate Table',
-                      visualDensity: VisualDensity.compact,
-                      onPressed: () => _showDuplicateTableDialog(tbl),
-                    ),
-                    // Truncate / Empty
-                    IconButton(
-                      icon: const Icon(Icons.cleaning_services_outlined, size: 18),
-                      tooltip: 'Empty Table (Truncate)',
-                      visualDensity: VisualDensity.compact,
-                      color: Colors.orange,
-                      onPressed: () => _showTruncateTableDialog(tbl),
-                    ),
-                    // Delete
-                    IconButton(
-                      icon: const Icon(Icons.delete_outline, size: 18),
-                      tooltip: 'Delete Table',
-                      visualDensity: VisualDensity.compact,
-                      color: Colors.red,
-                      onPressed: () => _showDeleteTableDialog(tbl),
-                    ),
-                  ],
+                    onChanged: (val) => setState(() => _tableSearchFilter = val),
+                  ),
                 ),
-              );
-            },
+                const SizedBox(width: 12),
+                OutlinedButton.icon(
+                  icon: const Icon(Icons.refresh, size: 16),
+                  label: const Text('Refresh'),
+                  onPressed: _loadTables,
+                ),
+                const SizedBox(width: 16),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade100,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.grey.shade300),
+                  ),
+                  child: Text(
+                    '${_tables.length} tables in database',
+                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.grey.shade700),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                FilledButton.icon(
+                  icon: const Icon(Icons.add, size: 16),
+                  label: const Text('Create Table...'),
+                  onPressed: _showNewTableDialog,
+                ),
+              ],
+            ),
+          ),
+        ),
+        const Divider(height: 1),
+        // Tables List
+        Expanded(
+          child: filteredTables.isEmpty
+              ? Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.table_chart_outlined, size: 48, color: Colors.grey),
+                      const SizedBox(height: 8),
+                      Text(
+                        _tables.isEmpty ? 'No tables found in this database.' : 'No tables match "$_tableSearchFilter"',
+                        style: const TextStyle(color: Colors.grey),
+                      ),
+                      if (_tables.isEmpty) ...[
+                        const SizedBox(height: 12),
+                        FilledButton.icon(
+                          icon: const Icon(Icons.add),
+                          label: const Text('Create First Table'),
+                          onPressed: _showNewTableDialog,
+                        ),
+                      ],
+                    ],
+                  ),
+                )
+              : ListView.separated(
+                  itemCount: filteredTables.length,
+                  separatorBuilder: (_, __) => const Divider(height: 1),
+                  itemBuilder: (context, idx) {
+                    final tbl = filteredTables[idx];
+                    final isSelected = tbl.id == _selectedTable?.id;
+                    final occCount = _occurrences.where((o) => o.baseTableId == tbl.id).length;
+
+                    return GestureDetector(
+                      onSecondaryTapUp: (details) => _showTableContextMenu(details.globalPosition, tbl),
+                      child: Container(
+                        color: isSelected
+                            ? Theme.of(context).colorScheme.primaryContainer.withValues(alpha: 0.25)
+                            : null,
+                        child: ListTile(
+                          selected: isSelected,
+                          leading: Icon(
+                            Icons.table_chart,
+                            color: isSelected ? Theme.of(context).colorScheme.primary : Colors.grey.shade700,
+                          ),
+                          title: Row(
+                            children: [
+                              Text(
+                                tbl.displayName,
+                                style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  color: isSelected ? Theme.of(context).colorScheme.primary : null,
+                                ),
+                              ),
+                              if (occCount > 0) ...[
+                                const SizedBox(width: 8),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                                  decoration: BoxDecoration(
+                                    color: Colors.blue.withValues(alpha: 0.1),
+                                    borderRadius: BorderRadius.circular(4),
+                                    border: Border.all(color: Colors.blue.withValues(alpha: 0.2)),
+                                  ),
+                                  child: Text(
+                                    '$occCount in graph',
+                                    style: const TextStyle(fontSize: 10, color: Colors.blue, fontWeight: FontWeight.w600),
+                                  ),
+                                ),
+                              ],
+                            ],
+                          ),
+                          subtitle: Text('SQL Table: ${tbl.name} • ${tbl.columns.length} fields'),
+                          onTap: () => setState(() => _selectedTable = tbl),
+                          trailing: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              // Manage Fields shortcut
+                              FilledButton.tonalIcon(
+                                icon: const Icon(Icons.view_column_outlined, size: 15),
+                                label: const Text('Fields', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                                style: FilledButton.styleFrom(
+                                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                                  visualDensity: VisualDensity.compact,
+                                ),
+                                onPressed: () {
+                                  setState(() => _selectedTable = tbl);
+                                  _tabController.animateTo(1);
+                                },
+                              ),
+                              const SizedBox(width: 6),
+                              const SizedBox(height: 24, child: VerticalDivider(width: 1)),
+                              const SizedBox(width: 4),
+                              // Rename
+                              IconButton(
+                                icon: const Icon(Icons.edit_outlined, size: 18),
+                                tooltip: 'Rename Table',
+                                visualDensity: VisualDensity.compact,
+                                onPressed: () => _showRenameTableDialog(tbl),
+                              ),
+                              // Duplicate
+                              IconButton(
+                                icon: const Icon(Icons.copy_outlined, size: 18),
+                                tooltip: 'Duplicate Table',
+                                visualDensity: VisualDensity.compact,
+                                onPressed: () => _showDuplicateTableDialog(tbl),
+                              ),
+                              // Truncate / Empty
+                              IconButton(
+                                icon: const Icon(Icons.cleaning_services_outlined, size: 18),
+                                tooltip: 'Empty Table (Truncate)',
+                                visualDensity: VisualDensity.compact,
+                                color: Colors.orange.shade700,
+                                onPressed: () => _showTruncateTableDialog(tbl),
+                              ),
+                              // Delete
+                              IconButton(
+                                icon: const Icon(Icons.delete_outline, size: 18),
+                                tooltip: 'Delete Table',
+                                visualDensity: VisualDensity.compact,
+                                color: Colors.red.shade700,
+                                onPressed: () => _showDeleteTableDialog(tbl),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+        ),
+        // Canonical FileMaker Bottom Action Panel
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 10.0),
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+            border: Border(top: BorderSide(color: Colors.grey.shade300)),
+          ),
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (_selectedTable != null) ...[
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.3)),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.table_chart, size: 15, color: Theme.of(context).colorScheme.primary),
+                        const SizedBox(width: 6),
+                        Text(
+                          'Selected: ${_selectedTable!.displayName} (${_selectedTable!.columns.length} fields)',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                            color: Theme.of(context).colorScheme.primary,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ] else
+                  Text(
+                    'Select a table above to manage its schema or data.',
+                    style: TextStyle(fontSize: 12, color: Colors.grey.shade600, fontStyle: FontStyle.italic),
+                  ),
+                const SizedBox(width: 16),
+                OutlinedButton.icon(
+                  icon: const Icon(Icons.edit_outlined, size: 16),
+                  label: const Text('Rename...'),
+                  onPressed: _selectedTable != null ? () => _showRenameTableDialog(_selectedTable!) : null,
+                ),
+                const SizedBox(width: 8),
+                OutlinedButton.icon(
+                  icon: const Icon(Icons.copy_outlined, size: 16),
+                  label: const Text('Duplicate'),
+                  onPressed: _selectedTable != null ? () => _showDuplicateTableDialog(_selectedTable!) : null,
+                ),
+                const SizedBox(width: 8),
+                OutlinedButton.icon(
+                  icon: const Icon(Icons.cleaning_services_outlined, size: 16, color: Colors.orange),
+                  label: const Text('Empty...'),
+                  style: OutlinedButton.styleFrom(foregroundColor: Colors.orange.shade800),
+                  onPressed: _selectedTable != null ? () => _showTruncateTableDialog(_selectedTable!) : null,
+                ),
+                const SizedBox(width: 8),
+                FilledButton.icon(
+                  icon: const Icon(Icons.delete_outline, size: 16),
+                  label: const Text('Delete...'),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: Colors.red.shade700,
+                    foregroundColor: Colors.white,
+                  ),
+                  onPressed: _selectedTable != null ? () => _showDeleteTableDialog(_selectedTable!) : null,
+                ),
+                const SizedBox(width: 12),
+                FilledButton.icon(
+                  icon: const Icon(Icons.view_column_outlined, size: 16),
+                  label: const Text('Manage Fields ->'),
+                  onPressed: _selectedTable != null
+                      ? () => _tabController.animateTo(1)
+                      : null,
+                ),
+              ],
+            ),
           ),
         ),
       ],
