@@ -28,6 +28,10 @@ void main() {
     expect(find.text('Fields'), findsOneWidget);
     expect(find.text('Relationships Graph'), findsOneWidget);
 
+    // Verify Select All Checkbox
+    expect(find.text('Select All'), findsOneWidget);
+    expect(find.byType(Checkbox), findsWidgets);
+
     // Verify Table operations toolbar buttons
     expect(find.text('Create Table...'), findsWidgets);
     expect(find.text('Refresh'), findsOneWidget);

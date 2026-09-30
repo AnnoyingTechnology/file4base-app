@@ -9,7 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.4.19] - 2026-09-30
+## [0.4.20] - 2026-09-30
+
+### Added
+- **Manage Database Multi-Table Selection & Batch Operations**:
+  - Added checkboxes to the **Tables** tab in `ManageDatabaseDialog` allowing multi-selection of database tables.
+  - Added a **Select All** header checkbox with tristate support (selected, unselected, partially selected) and a real-time selection badge showing the number of selected tables with a quick-clear button.
+  - Added batch operations in the bottom action bar:
+    - **Batch Duplicate (`Duplicate (N)`)**: duplicates multiple selected tables in one step.
+    - **Batch Truncate / Empty (`Empty (N)...`)**: empties records from all selected tables while preserving table structures and columns, with a consolidated warning dialog.
+    - **Batch Delete (`Delete (N)...`)**: permanently drops multiple selected tables and their columns in a single confirmation flow.
+  - Single-table actions (`Rename...` and `Manage Fields ->`) gracefully adapt when single or multiple tables are checked.
 
 ### Added
 - **GitHub Pages Documentation Website (`https://file4base.github.io/file4base-app/`)**:

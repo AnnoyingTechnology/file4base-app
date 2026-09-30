@@ -28,6 +28,7 @@ class _ManageDatabaseDialogState extends ConsumerState<ManageDatabaseDialog>
   List<TableOccurrenceModel> _occurrences = [];
   List<RelationshipModel> _relationships = [];
   TableModel? _selectedTable;
+  final Set<String> _selectedTableIds = {};
   bool _isLoading = true;
   String? _errorMessage;
   String _tableSearchFilter = '';
@@ -61,6 +62,8 @@ class _ManageDatabaseDialogState extends ConsumerState<ManageDatabaseDialog>
           _tables = tables;
           _occurrences = occurrences;
           _relationships = relationships;
+          final existingIds = tables.map((t) => t.id).toSet();
+          _selectedTableIds.removeWhere((id) => !existingIds.contains(id));
           if (_selectedTable != null) {
             _selectedTable = tables.firstWhere(
               (t) => t.id == _selectedTable!.id,
@@ -463,6 +466,7 @@ class _ManageDatabaseDialogState extends ConsumerState<ManageDatabaseDialog>
     try {
       final client = ref.read(apiClientProvider);
       await client.deleteTable(tbl.id);
+      _selectedTableIds.remove(tbl.id);
       if (_selectedTable?.id == tbl.id) {
         setState(() => _selectedTable = null);
       }
@@ -471,6 +475,194 @@ class _ManageDatabaseDialogState extends ConsumerState<ManageDatabaseDialog>
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Error deleting table: $e')),
+        );
+      }
+    }
+  }
+
+  // ─── Batch Table Operations ──────────────────────────────────────────────
+
+  List<TableModel> _getSelectedTablesList() {
+    if (_selectedTableIds.isEmpty) {
+      return _selectedTable != null ? [_selectedTable!] : [];
+    }
+    return _tables.where((t) => _selectedTableIds.contains(t.id)).toList();
+  }
+
+  Future<void> _showBatchDuplicateDialog() async {
+    final targets = _getSelectedTablesList();
+    if (targets.isEmpty) return;
+
+    if (targets.length == 1) {
+      return _showDuplicateTableDialog(targets.first);
+    }
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Duplicate ${targets.length} Tables'),
+        content: Text(
+          'This will duplicate ${targets.length} tables with their field definitions (without data):\n\n'
+          '${targets.map((t) => '• ${t.displayName}').join('\n')}\n\n'
+          'Do you want to continue?',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text('Duplicate (${targets.length})'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    final client = ref.read(apiClientProvider);
+    int successCount = 0;
+    final List<String> errors = [];
+
+    for (final tbl in targets) {
+      try {
+        await client.duplicateTable(tbl.id);
+        successCount++;
+      } catch (e) {
+        errors.add('${tbl.displayName}: $e');
+      }
+    }
+
+    await _loadTables();
+    if (mounted) {
+      if (errors.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Successfully duplicated $successCount tables.')),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Duplicated $successCount tables. Errors: ${errors.join(", ")}'),
+            backgroundColor: Colors.orange.shade800,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _showBatchTruncateDialog() async {
+    final targets = _getSelectedTablesList();
+    if (targets.isEmpty) return;
+
+    if (targets.length == 1) {
+      return _showTruncateTableDialog(targets.first);
+    }
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Empty (${targets.length}) Tables'),
+        content: Text(
+          'WARNING: This will permanently delete ALL records in ${targets.length} tables:\n\n'
+          '${targets.map((t) => '• ${t.displayName} (${t.name})').join('\n')}\n\n'
+          'The structure and fields will be preserved, but records cannot be recovered. Continue?',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.orange.shade800),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text('Empty (${targets.length}) Tables'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    final client = ref.read(apiClientProvider);
+    int successCount = 0;
+    final List<String> errors = [];
+
+    for (final tbl in targets) {
+      try {
+        await client.truncateTable(tbl.id);
+        successCount++;
+      } catch (e) {
+        errors.add('${tbl.displayName}: $e');
+      }
+    }
+
+    if (mounted) {
+      if (errors.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Emptied all records in $successCount tables.')),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Emptied $successCount tables. Errors: ${errors.join(", ")}'),
+            backgroundColor: Colors.orange.shade800,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _showBatchDeleteDialog() async {
+    final targets = _getSelectedTablesList();
+    if (targets.isEmpty) return;
+
+    if (targets.length == 1) {
+      return _showDeleteTableDialog(targets.first);
+    }
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Delete (${targets.length}) Tables?'),
+        content: Text(
+          'DANGER: This will permanently DROP ${targets.length} tables and ALL their records, fields, and definitions:\n\n'
+          '${targets.map((t) => '• ${t.displayName} (${t.name})').join('\n')}\n\n'
+          'This action CANNOT be undone. Are you sure you want to proceed?',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.red.shade700),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text('Delete (${targets.length}) Tables'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    final client = ref.read(apiClientProvider);
+    int successCount = 0;
+    final List<String> errors = [];
+
+    for (final tbl in targets) {
+      try {
+        await client.deleteTable(tbl.id);
+        _selectedTableIds.remove(tbl.id);
+        if (_selectedTable?.id == tbl.id) {
+          _selectedTable = null;
+        }
+        successCount++;
+      } catch (e) {
+        errors.add('${tbl.displayName}: $e');
+      }
+    }
+
+    await _loadTables();
+    if (mounted) {
+      if (errors.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Permanently deleted $successCount tables.')),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Deleted $successCount tables. Errors: ${errors.join(", ")}'),
+            backgroundColor: Colors.red.shade700,
+          ),
         );
       }
     }
@@ -625,9 +817,15 @@ class _ManageDatabaseDialogState extends ConsumerState<ManageDatabaseDialog>
             t.displayName.toLowerCase().contains(_tableSearchFilter.toLowerCase()) ||
             t.name.toLowerCase().contains(_tableSearchFilter.toLowerCase())).toList();
 
+    final allVisibleSelected = filteredTables.isNotEmpty &&
+        filteredTables.every((t) => _selectedTableIds.contains(t.id));
+    final someVisibleSelected = filteredTables.any((t) => _selectedTableIds.contains(t.id)) &&
+        !allVisibleSelected;
+    final totalSelectedCount = _selectedTableIds.length;
+
     return Column(
       children: [
-        // Top Toolbar: Search filter, Table count, Refresh, and Create Table
+        // Top Toolbar: Checkbox Select-All, Search filter, Table count, Refresh, and Create Table
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 10.0),
           child: SingleChildScrollView(
@@ -635,8 +833,88 @@ class _ManageDatabaseDialogState extends ConsumerState<ManageDatabaseDialog>
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
+                // Select All Checkbox with Tooltip
+                Tooltip(
+                  message: allVisibleSelected ? 'Deselect all visible tables' : 'Select all visible tables',
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(4),
+                    onTap: () {
+                      setState(() {
+                        if (allVisibleSelected) {
+                          for (final t in filteredTables) {
+                            _selectedTableIds.remove(t.id);
+                          }
+                        } else {
+                          for (final t in filteredTables) {
+                            _selectedTableIds.add(t.id);
+                          }
+                        }
+                      });
+                    },
+                    child: Padding(
+                      padding: const EdgeInsets.all(4.0),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Checkbox(
+                            tristate: true,
+                            value: allVisibleSelected
+                                ? true
+                                : (someVisibleSelected ? null : false),
+                            onChanged: (val) {
+                              setState(() {
+                                if (allVisibleSelected) {
+                                  for (final t in filteredTables) {
+                                    _selectedTableIds.remove(t.id);
+                                  }
+                                } else {
+                                  for (final t in filteredTables) {
+                                    _selectedTableIds.add(t.id);
+                                  }
+                                }
+                              });
+                            },
+                          ),
+                          const Text('Select All', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+                if (totalSelectedCount > 0) ...[
+                  const SizedBox(width: 8),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.4)),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.check_box, size: 14, color: Theme.of(context).colorScheme.primary),
+                        const SizedBox(width: 4),
+                        Text(
+                          '$totalSelectedCount selected',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                            color: Theme.of(context).colorScheme.primary,
+                          ),
+                        ),
+                        const SizedBox(width: 4),
+                        InkWell(
+                          onTap: () => setState(() => _selectedTableIds.clear()),
+                          child: Icon(Icons.close, size: 14, color: Theme.of(context).colorScheme.primary),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+                const SizedBox(width: 12),
                 SizedBox(
-                  width: 260,
+                  width: 240,
                   child: TextField(
                     decoration: InputDecoration(
                       hintText: 'Filter tables...',
@@ -707,20 +985,45 @@ class _ManageDatabaseDialogState extends ConsumerState<ManageDatabaseDialog>
                   separatorBuilder: (_, __) => const Divider(height: 1),
                   itemBuilder: (context, idx) {
                     final tbl = filteredTables[idx];
-                    final isSelected = tbl.id == _selectedTable?.id;
+                    final isChecked = _selectedTableIds.contains(tbl.id);
+                    final isCurrentFocused = tbl.id == _selectedTable?.id;
                     final occCount = _occurrences.where((o) => o.baseTableId == tbl.id).length;
 
                     return GestureDetector(
                       onSecondaryTapUp: (details) => _showTableContextMenu(details.globalPosition, tbl),
                       child: Container(
-                        color: isSelected
+                        color: isChecked
                             ? Theme.of(context).colorScheme.primaryContainer.withValues(alpha: 0.25)
-                            : null,
+                            : (isCurrentFocused
+                                ? Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.4)
+                                : null),
                         child: ListTile(
-                          selected: isSelected,
-                          leading: Icon(
-                            Icons.table_chart,
-                            color: isSelected ? Theme.of(context).colorScheme.primary : Colors.grey.shade700,
+                          selected: isChecked || isCurrentFocused,
+                          leading: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              // Checkbox to select table for batch operations
+                              Checkbox(
+                                value: isChecked,
+                                visualDensity: VisualDensity.compact,
+                                onChanged: (val) {
+                                  setState(() {
+                                    if (val == true) {
+                                      _selectedTableIds.add(tbl.id);
+                                      _selectedTable = tbl;
+                                    } else {
+                                      _selectedTableIds.remove(tbl.id);
+                                    }
+                                  });
+                                },
+                              ),
+                              Icon(
+                                Icons.table_chart,
+                                color: (isChecked || isCurrentFocused)
+                                    ? Theme.of(context).colorScheme.primary
+                                    : Colors.grey.shade700,
+                              ),
+                            ],
                           ),
                           title: Row(
                             children: [
@@ -728,7 +1031,9 @@ class _ManageDatabaseDialogState extends ConsumerState<ManageDatabaseDialog>
                                 tbl.displayName,
                                 style: TextStyle(
                                   fontWeight: FontWeight.bold,
-                                  color: isSelected ? Theme.of(context).colorScheme.primary : null,
+                                  color: (isChecked || isCurrentFocused)
+                                      ? Theme.of(context).colorScheme.primary
+                                      : null,
                                 ),
                               ),
                               if (occCount > 0) ...[
@@ -749,7 +1054,14 @@ class _ManageDatabaseDialogState extends ConsumerState<ManageDatabaseDialog>
                             ],
                           ),
                           subtitle: Text('SQL Table: ${tbl.name} • ${tbl.columns.length} fields'),
-                          onTap: () => setState(() => _selectedTable = tbl),
+                          onTap: () {
+                            setState(() {
+                              _selectedTable = tbl;
+                              if (_selectedTableIds.isEmpty) {
+                                _selectedTableIds.add(tbl.id);
+                              }
+                            });
+                          },
                           trailing: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
@@ -819,7 +1131,31 @@ class _ManageDatabaseDialogState extends ConsumerState<ManageDatabaseDialog>
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                if (_selectedTable != null) ...[
+                if (totalSelectedCount > 1) ...[
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.3)),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.checklist, size: 16, color: Theme.of(context).colorScheme.primary),
+                        const SizedBox(width: 6),
+                        Text(
+                          '$totalSelectedCount tables selected',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                            color: Theme.of(context).colorScheme.primary,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ] else if (_selectedTable != null) ...[
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                     decoration: BoxDecoration(
@@ -845,37 +1181,49 @@ class _ManageDatabaseDialogState extends ConsumerState<ManageDatabaseDialog>
                   ),
                 ] else
                   Text(
-                    'Select a table above to manage its schema or data.',
+                    'Select one or more tables above using checkboxes to apply actions.',
                     style: TextStyle(fontSize: 12, color: Colors.grey.shade600, fontStyle: FontStyle.italic),
                   ),
                 const SizedBox(width: 16),
+                // Rename button (only valid for 1 table)
                 OutlinedButton.icon(
                   icon: const Icon(Icons.edit_outlined, size: 16),
                   label: const Text('Rename...'),
-                  onPressed: _selectedTable != null ? () => _showRenameTableDialog(_selectedTable!) : null,
+                  onPressed: (_selectedTable != null && totalSelectedCount <= 1)
+                      ? () => _showRenameTableDialog(_selectedTable!)
+                      : null,
                 ),
                 const SizedBox(width: 8),
+                // Duplicate button (batch capable)
                 OutlinedButton.icon(
                   icon: const Icon(Icons.copy_outlined, size: 16),
-                  label: const Text('Duplicate'),
-                  onPressed: _selectedTable != null ? () => _showDuplicateTableDialog(_selectedTable!) : null,
+                  label: Text(totalSelectedCount > 1 ? 'Duplicate ($totalSelectedCount)' : 'Duplicate'),
+                  onPressed: (_selectedTable != null || totalSelectedCount > 0)
+                      ? _showBatchDuplicateDialog
+                      : null,
                 ),
                 const SizedBox(width: 8),
+                // Empty / Truncate button (batch capable)
                 OutlinedButton.icon(
                   icon: const Icon(Icons.cleaning_services_outlined, size: 16, color: Colors.orange),
-                  label: const Text('Empty...'),
+                  label: Text(totalSelectedCount > 1 ? 'Empty ($totalSelectedCount)...' : 'Empty...'),
                   style: OutlinedButton.styleFrom(foregroundColor: Colors.orange.shade800),
-                  onPressed: _selectedTable != null ? () => _showTruncateTableDialog(_selectedTable!) : null,
+                  onPressed: (_selectedTable != null || totalSelectedCount > 0)
+                      ? _showBatchTruncateDialog
+                      : null,
                 ),
                 const SizedBox(width: 8),
+                // Delete button (batch capable)
                 FilledButton.icon(
                   icon: const Icon(Icons.delete_outline, size: 16),
-                  label: const Text('Delete...'),
+                  label: Text(totalSelectedCount > 1 ? 'Delete ($totalSelectedCount)...' : 'Delete...'),
                   style: FilledButton.styleFrom(
                     backgroundColor: Colors.red.shade700,
                     foregroundColor: Colors.white,
                   ),
-                  onPressed: _selectedTable != null ? () => _showDeleteTableDialog(_selectedTable!) : null,
+                  onPressed: (_selectedTable != null || totalSelectedCount > 0)
+                      ? _showBatchDeleteDialog
+                      : null,
                 ),
                 const SizedBox(width: 12),
                 FilledButton.icon(
