@@ -1014,10 +1014,11 @@ class ApiClient {
     return AuthResult.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
   }
 
-  Future<List<UserModel>> listUsers() async {
+  Future<List<UserModel>> listUsers({String? database}) async {
+    final query = (database != null && database.isNotEmpty) ? '?database=${Uri.encodeComponent(database)}' : '';
     final response = await _httpClient.get(
-      Uri.parse('$baseUrl/api/v1/security/users'),
-      headers: _headers(),
+      Uri.parse('$baseUrl/api/v1/security/users$query'),
+      headers: _headers(extra: database != null ? {'X-Database-Name': database} : null),
     );
     _checkResponse(response);
     final list = jsonDecode(response.body) as List<dynamic>;
@@ -1029,11 +1030,14 @@ class ApiClient {
     required String password,
     required String role,
     bool isActive = true,
+    String? database,
   }) async {
+    final query = (database != null && database.isNotEmpty) ? '?database=${Uri.encodeComponent(database)}' : '';
     final response = await _httpClient.post(
-      Uri.parse('$baseUrl/api/v1/security/users'),
-      headers: _headers(contentType: 'application/json'),
+      Uri.parse('$baseUrl/api/v1/security/users$query'),
+      headers: _headers(contentType: 'application/json', extra: database != null ? {'X-Database-Name': database} : null),
       body: jsonEncode({
+        'database': database ?? '',
         'username': username,
         'password': password,
         'role': role,
@@ -1049,8 +1053,12 @@ class ApiClient {
     String? password,
     required String role,
     bool? isActive,
+    String? database,
   }) async {
     final Map<String, dynamic> body = {'role': role};
+    if (database != null && database.isNotEmpty) {
+      body['database'] = database;
+    }
     if (password != null && password.isNotEmpty) {
       body['password'] = password;
     }
@@ -1058,37 +1066,44 @@ class ApiClient {
       body['is_active'] = isActive;
     }
 
+    final query = (database != null && database.isNotEmpty) ? '?database=${Uri.encodeComponent(database)}' : '';
     final response = await _httpClient.put(
-      Uri.parse('$baseUrl/api/v1/security/users/$id'),
-      headers: _headers(contentType: 'application/json'),
+      Uri.parse('$baseUrl/api/v1/security/users/$id$query'),
+      headers: _headers(contentType: 'application/json', extra: database != null ? {'X-Database-Name': database} : null),
       body: jsonEncode(body),
     );
     _checkResponse(response);
   }
 
-  Future<void> deleteUser(String id) async {
+  Future<void> deleteUser(String id, {String? database}) async {
+    final query = (database != null && database.isNotEmpty) ? '?database=${Uri.encodeComponent(database)}' : '';
     final response = await _httpClient.delete(
-      Uri.parse('$baseUrl/api/v1/security/users/$id'),
-      headers: _headers(),
+      Uri.parse('$baseUrl/api/v1/security/users/$id$query'),
+      headers: _headers(extra: database != null ? {'X-Database-Name': database} : null),
     );
     _checkResponse(response);
   }
 
-  Future<List<UserLayoutPermissionModel>> getUserPermissions(String userId) async {
+  Future<List<UserLayoutPermissionModel>> getUserPermissions(String userId, {String? database}) async {
+    final query = (database != null && database.isNotEmpty) ? '?database=${Uri.encodeComponent(database)}' : '';
     final response = await _httpClient.get(
-      Uri.parse('$baseUrl/api/v1/security/users/$userId/permissions'),
-      headers: _headers(),
+      Uri.parse('$baseUrl/api/v1/security/users/$userId/permissions$query'),
+      headers: _headers(extra: database != null ? {'X-Database-Name': database} : null),
     );
     _checkResponse(response);
     final list = jsonDecode(response.body) as List<dynamic>;
     return list.map((item) => UserLayoutPermissionModel.fromJson(item as Map<String, dynamic>)).toList();
   }
 
-  Future<void> setUserPermissions(String userId, List<Map<String, String>> permissions) async {
+  Future<void> setUserPermissions(String userId, List<Map<String, String>> permissions, {String? database}) async {
+    final query = (database != null && database.isNotEmpty) ? '?database=${Uri.encodeComponent(database)}' : '';
     final response = await _httpClient.put(
-      Uri.parse('$baseUrl/api/v1/security/users/$userId/permissions'),
-      headers: _headers(contentType: 'application/json'),
-      body: jsonEncode({'permissions': permissions}),
+      Uri.parse('$baseUrl/api/v1/security/users/$userId/permissions$query'),
+      headers: _headers(contentType: 'application/json', extra: database != null ? {'X-Database-Name': database} : null),
+      body: jsonEncode({
+        'database': database ?? '',
+        'permissions': permissions,
+      }),
     );
     _checkResponse(response);
   }

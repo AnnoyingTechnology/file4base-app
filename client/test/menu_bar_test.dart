@@ -83,4 +83,80 @@ void main() {
     expect(openRemoteCalled, isFalse);
     expect(aboutCalled, isFalse);
   });
+
+  testWidgets('File4BaseMenuBar displays Sign In when unauthenticated and Sign Out when authenticated',
+      (WidgetTester tester) async {
+    tester.view.physicalSize = const Size(1440, 900);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+
+    bool signInCalled = false;
+    bool signOutCalled = false;
+
+    // 1. Unauthenticated test
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: File4BaseMenuBar(
+            activeMode: OperationalMode.browse,
+            isAuthenticated: false,
+            onSignIn: () => signInCalled = true,
+            onSignOut: () => signOutCalled = true,
+            onModeChanged: (_) {},
+            onManageDatabase: () {},
+            onOpenRemote: () {},
+            onAbout: () {},
+            isToolbarVisible: true,
+            onToggleToolbar: (_) {},
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    // Tap File menu to open dropdown
+    await tester.tap(find.text('File'));
+    await tester.pumpAndSettle();
+
+    // Verify Sign In is displayed
+    expect(find.text('Sign In...'), findsOneWidget);
+    expect(find.text('Sign Out (Lock Session)'), findsNothing);
+
+    await tester.tap(find.text('Sign In...'));
+    await tester.pumpAndSettle();
+    expect(signInCalled, isTrue);
+
+    // 2. Authenticated test
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: File4BaseMenuBar(
+            activeMode: OperationalMode.browse,
+            isAuthenticated: true,
+            onSignIn: () => signInCalled = true,
+            onSignOut: () => signOutCalled = true,
+            onModeChanged: (_) {},
+            onManageDatabase: () {},
+            onOpenRemote: () {},
+            onAbout: () {},
+            isToolbarVisible: true,
+            onToggleToolbar: (_) {},
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    // Tap File menu to open dropdown
+    await tester.tap(find.text('File'));
+    await tester.pumpAndSettle();
+
+    // Verify Sign Out is displayed
+    expect(find.text('Sign Out (Lock Session)'), findsOneWidget);
+    expect(find.text('Sign In...'), findsNothing);
+
+    await tester.tap(find.text('Sign Out (Lock Session)'));
+    await tester.pumpAndSettle();
+    expect(signOutCalled, isTrue);
+  });
 }

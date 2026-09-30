@@ -127,14 +127,27 @@ func (s *Service) ExportSolution(ctx context.Context, solutionName string, dbCon
 		TableOccurrences:   occurrences,
 		Relationships:      relationships,
 		Layouts:            layouts,
-		Users: []UserAccount{
-			{
-				ID:        uuid.NewString(),
-				Username:  "admin",
-				Role:      "Full Access",
-				CreatedAt: now,
-			},
-		},
+		Users:              func() []UserAccount {
+			metaUsers, _ := s.ListUsers(ctx)
+			res := make([]UserAccount, 0, len(metaUsers))
+			for _, mu := range metaUsers {
+				res = append(res, UserAccount{
+					ID:        mu.ID,
+					Username:  mu.Username,
+					Role:      mu.Role,
+					CreatedAt: mu.CreatedAt,
+				})
+			}
+			if len(res) == 0 {
+				res = append(res, UserAccount{
+					ID:        uuid.NewString(),
+					Username:  "admin",
+					Role:      "Full Access",
+					CreatedAt: now,
+				})
+			}
+			return res
+		}(),
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
@@ -240,6 +253,33 @@ func (s *Service) ImportSolution(ctx context.Context, data []byte) (*SolutionBun
 			_, _ = s.CreateLayout(ctx, lay.Name, lay.TableOccurrenceID, lay.Definition)
 		} else {
 			_, _ = s.UpdateLayout(ctx, lay.ID, lay.Name, lay.Definition)
+		}
+	}
+
+	// 7. Import users into active database
+	if len(bundle.Users) > 0 {
+		currentUsers, _ := s.ListUsers(ctx)
+		existingMap := make(map[string]bool)
+		for _, u := range currentUsers {
+			existingMap[strings.ToLower(u.Username)] = true
+		}
+		for _, u := range bundle.Users {
+			uname := strings.TrimSpace(u.Username)
+			if uname != "" && !existingMap[strings.ToLower(uname)] {
+				role := u.Role
+				if role == "Full Access" || role == "owner" {
+					role = "owner"
+				} else if role == "admin" {
+					role = "admin"
+				} else {
+					role = "user"
+				}
+				pass := bundle.DatabaseConnection.Password
+				if pass == "" {
+					pass = "admin"
+				}
+				_, _ = s.CreateUser(ctx, uname, pass, role)
+			}
 		}
 	}
 

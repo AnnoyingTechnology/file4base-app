@@ -1,16 +1,19 @@
 import 'package:flutter/material.dart';
 import '../../core/api/api_client.dart';
+import '../../core/services/auto_save_service.dart';
 
 class ManageSecurityDialog extends StatefulWidget {
   final ApiClient apiClient;
   final UserModel currentUser;
   final String? databaseName;
+  final VoidCallback? onModified;
 
   const ManageSecurityDialog({
     super.key,
     required this.apiClient,
     required this.currentUser,
     this.databaseName,
+    this.onModified,
   });
 
   static Future<void> show(
@@ -18,6 +21,7 @@ class ManageSecurityDialog extends StatefulWidget {
     ApiClient apiClient,
     UserModel currentUser, {
     String? databaseName,
+    VoidCallback? onModified,
   }) {
     return showDialog(
       context: context,
@@ -26,6 +30,7 @@ class ManageSecurityDialog extends StatefulWidget {
         apiClient: apiClient,
         currentUser: currentUser,
         databaseName: databaseName,
+        onModified: onModified,
       ),
     );
   }
@@ -71,14 +76,14 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
     });
 
     try {
-      final users = await widget.apiClient.listUsers();
+      final users = await widget.apiClient.listUsers(database: widget.databaseName);
       final layouts = await widget.apiClient.listLayouts();
 
       // Preload permissions for all users
       final permsMap = <String, List<UserLayoutPermissionModel>>{};
       for (final u in users) {
         try {
-          final p = await widget.apiClient.getUserPermissions(u.id);
+          final p = await widget.apiClient.getUserPermissions(u.id, database: widget.databaseName);
           permsMap[u.id] = p;
         } catch (_) {
           permsMap[u.id] = [];
@@ -154,7 +159,10 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
         user.id,
         role: user.role,
         isActive: newActive,
+        database: widget.databaseName,
       );
+      widget.onModified?.call();
+      AutoSaveService.instance.markDirty();
 
       setState(() {
         final index = _users.indexWhere((u) => u.id == user.id);
@@ -277,7 +285,10 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
                     role: user.role,
                     password: p1,
                     isActive: user.isActive,
+                    database: widget.databaseName,
                   );
+                  widget.onModified?.call();
+                  AutoSaveService.instance.markDirty();
                   if (ctx.mounted) Navigator.of(ctx).pop();
                   if (mounted) {
                     ScaffoldMessenger.of(context).showSnackBar(
@@ -622,6 +633,7 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
                               password: pass,
                               role: selectedRole,
                               isActive: isActive,
+                              database: widget.databaseName,
                             );
                             targetId = created.id;
                           } else {
@@ -631,6 +643,7 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
                               role: selectedRole,
                               password: pass.isNotEmpty ? pass : null,
                               isActive: isActive,
+                              database: widget.databaseName,
                             );
                           }
 
@@ -641,7 +654,9 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
                               'access_level': e.value,
                             };
                           }).toList();
-                          await widget.apiClient.setUserPermissions(targetId, permsList);
+                          await widget.apiClient.setUserPermissions(targetId, permsList, database: widget.databaseName);
+                          widget.onModified?.call();
+                          AutoSaveService.instance.markDirty();
 
                           if (ctx.mounted) Navigator.of(ctx).pop();
                           await _loadData();
@@ -741,6 +756,7 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
                     password: pass,
                     role: user.role,
                     isActive: true,
+                    database: widget.databaseName,
                   );
 
                   // Copy permissions from original
@@ -750,8 +766,10 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
                       'layout_id': p.layoutId,
                       'access_level': p.accessLevel,
                     }).toList();
-                    await widget.apiClient.setUserPermissions(newUser.id, payload);
+                    await widget.apiClient.setUserPermissions(newUser.id, payload, database: widget.databaseName);
                   }
+                  widget.onModified?.call();
+                  AutoSaveService.instance.markDirty();
 
                   if (ctx.mounted) Navigator.of(ctx).pop();
                   await _loadData();
@@ -827,7 +845,9 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
     if (confirm != true) return;
 
     try {
-      await widget.apiClient.deleteUser(user.id);
+      await widget.apiClient.deleteUser(user.id, database: widget.databaseName);
+      widget.onModified?.call();
+      AutoSaveService.instance.markDirty();
       await _loadData();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

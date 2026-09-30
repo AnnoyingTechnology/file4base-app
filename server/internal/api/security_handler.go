@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/file4base/file4base-app/server/internal/dbal"
 	"github.com/file4base/file4base-app/server/internal/schema"
@@ -79,9 +80,36 @@ func (h *SecurityHandler) Login(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (h *SecurityHandler) getServiceForRequest(r *http.Request, explicitDB ...string) (*schema.Service, error) {
+	dbName := strings.TrimSpace(r.URL.Query().Get("database"))
+	if dbName == "" {
+		dbName = strings.TrimSpace(r.Header.Get("X-Database-Name"))
+	}
+	if dbName == "" && len(explicitDB) > 0 {
+		dbName = strings.TrimSpace(explicitDB[0])
+	}
+	if dbName == "" || dbName == h.dbMgr.ActiveDatabase() {
+		_ = h.schemaSvc.EnsureSystemTables(r.Context())
+		return h.schemaSvc, nil
+	}
+
+	driver, err := h.dbMgr.GetDriver(r.Context(), dbName)
+	if err != nil {
+		return nil, fmt.Errorf("database '%s' not accessible: %w", dbName, err)
+	}
+	svc := schema.NewService(driver)
+	_ = svc.EnsureSystemTables(r.Context())
+	return svc, nil
+}
+
 func (h *SecurityHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
-	_ = h.schemaSvc.EnsureSystemTables(r.Context())
-	users, err := h.schemaSvc.ListUsers(r.Context())
+	svc, err := h.getServiceForRequest(r)
+	if err != nil {
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Database Error", err.Error())
+		return
+	}
+
+	users, err := svc.ListUsers(r.Context())
 	if err != nil {
 		telemetry.WriteInternalError(w, r, err)
 		return
@@ -92,6 +120,7 @@ func (h *SecurityHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
 }
 
 type CreateUserRequest struct {
+	Database string `json:"database,omitempty"`
 	Username string `json:"username"`
 	Password string `json:"password"`
 	Role     string `json:"role"`
@@ -105,12 +134,17 @@ func (h *SecurityHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	svc, err := h.getServiceForRequest(r, req.Database)
+	if err != nil {
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Database Error", err.Error())
+		return
+	}
+
 	var user *schema.UserMetadata
-	var err error
 	if req.IsActive != nil {
-		user, err = h.schemaSvc.CreateUser(r.Context(), req.Username, req.Password, req.Role, *req.IsActive)
+		user, err = svc.CreateUser(r.Context(), req.Username, req.Password, req.Role, *req.IsActive)
 	} else {
-		user, err = h.schemaSvc.CreateUser(r.Context(), req.Username, req.Password, req.Role)
+		user, err = svc.CreateUser(r.Context(), req.Username, req.Password, req.Role)
 	}
 	if err != nil {
 		telemetry.WriteProblem(w, r, http.StatusBadRequest, "User Creation Error", err.Error())
@@ -123,6 +157,7 @@ func (h *SecurityHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 }
 
 type UpdateUserRequest struct {
+	Database string `json:"database,omitempty"`
 	Password string `json:"password,omitempty"`
 	Role     string `json:"role"`
 	IsActive *bool  `json:"is_active,omitempty"`
@@ -136,7 +171,13 @@ func (h *SecurityHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.schemaSvc.UpdateUser(r.Context(), id, req.Password, req.Role, req.IsActive); err != nil {
+	svc, err := h.getServiceForRequest(r, req.Database)
+	if err != nil {
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Database Error", err.Error())
+		return
+	}
+
+	if err := svc.UpdateUser(r.Context(), id, req.Password, req.Role, req.IsActive); err != nil {
 		telemetry.WriteProblem(w, r, http.StatusBadRequest, "User Update Error", err.Error())
 		return
 	}
@@ -150,7 +191,13 @@ func (h *SecurityHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 
 func (h *SecurityHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	if err := h.schemaSvc.DeleteUser(r.Context(), id); err != nil {
+	svc, err := h.getServiceForRequest(r)
+	if err != nil {
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Database Error", err.Error())
+		return
+	}
+
+	if err := svc.DeleteUser(r.Context(), id); err != nil {
 		telemetry.WriteProblem(w, r, http.StatusBadRequest, "User Deletion Error", err.Error())
 		return
 	}
@@ -160,7 +207,13 @@ func (h *SecurityHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 
 func (h *SecurityHandler) GetUserPermissions(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	perms, err := h.schemaSvc.GetUserPermissions(r.Context(), id)
+	svc, err := h.getServiceForRequest(r)
+	if err != nil {
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Database Error", err.Error())
+		return
+	}
+
+	perms, err := svc.GetUserPermissions(r.Context(), id)
 	if err != nil {
 		telemetry.WriteProblem(w, r, http.StatusNotFound, "User Permissions Not Found", err.Error())
 		return
@@ -171,6 +224,7 @@ func (h *SecurityHandler) GetUserPermissions(w http.ResponseWriter, r *http.Requ
 }
 
 type SetPermissionsRequest struct {
+	Database    string                       `json:"database,omitempty"`
 	Permissions []schema.UserLayoutPermission `json:"permissions"`
 }
 
@@ -182,7 +236,13 @@ func (h *SecurityHandler) SetUserPermissions(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	if err := h.schemaSvc.SetUserPermissions(r.Context(), id, req.Permissions); err != nil {
+	svc, err := h.getServiceForRequest(r, req.Database)
+	if err != nil {
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Database Error", err.Error())
+		return
+	}
+
+	if err := svc.SetUserPermissions(r.Context(), id, req.Permissions); err != nil {
 		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Permission Update Error", err.Error())
 		return
 	}

@@ -134,7 +134,7 @@ class _DatabaseLoginDialogState extends State<DatabaseLoginDialog> {
       // Synchronize solution users into the database if packaged
       if (pkg.users.isNotEmpty) {
         try {
-          final currentUsers = await widget.apiClient.listUsers();
+          final currentUsers = await widget.apiClient.listUsers(database: targetDb);
           for (final u in pkg.users) {
             final uname = u['username']?.toString() ?? '';
             if (uname.isNotEmpty && !currentUsers.any((cu) => cu.username.toLowerCase() == uname.toLowerCase())) {
@@ -144,6 +144,7 @@ class _DatabaseLoginDialogState extends State<DatabaseLoginDialog> {
                   username: uname,
                   password: pkg.databaseConnection.password,
                   role: role,
+                  database: targetDb,
                 );
               } catch (_) {}
             }

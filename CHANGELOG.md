@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.18] - 2026-09-30
+
+### Fixed
+- **Unauthenticated Access Leak on Login Cancellation**:
+  - Fixed security vulnerability where dismissing or cancelling the initial database authentication dialog allowed unauthenticated access to Browse Mode, exposing database tables, field schemas, and records.
+  - Implemented strict unauthenticated state handling: cancelling authentication immediately purges all in-memory database context (`_tables`, `_selectedTable`, `_activeLayout`, `_serverLayouts`, and sets `_currentUser = null`).
+  - Protected all table loading and background health checks so unauthenticated sessions are completely blocked from querying table schemas or records.
+  - Added dedicated Protected Workspace interface displaying a security shield badge, active database indicator, and quick actions (`Sign In to Database`, `Open Solution (.f4p)`, `New Solution...`, `Connect Remote Server...`).
+  - Added session locking actions in `File4BaseMenuBar`: toggles between `Sign In...` and `Sign Out (Lock Session)`. All mode changes and database management dialogs now require an active authenticated session.
+
+### Changed
+- **Database & Solution-Scoped User Security (`Manage > Security`)**:
+  - Replaced global user sharing with strict per-database user isolation. Accounts and permissions now belong exclusively to the specific database/solution and are non-transferable across databases.
+  - Backend `SecurityHandler` now routes all user administration (`ListUsers`, `CreateUser`, `UpdateUser`, `DeleteUser`, `GetUserPermissions`, `SetUserPermissions`) directly to the target database driver resolved via `?database=...` query parameter, `X-Database-Name` header, or payload body.
+  - Solution Package (`.f4p`) synchronization:
+    - `ExportSolution` exports user accounts from `sys_users` into the MessagePack solution bundle (`bundle.Users`).
+    - `ImportSolution` syncs bundle users into the target database's `sys_users`.
+    - User mutations in `ManageSecurityDialog` trigger `AutoSaveService.instance.markDirty()` so edits persist to the active `.f4p` solution file.
+  - Client `ApiClient` and `ManageSecurityDialog` now pass `database` parameter across all security requests.
+
 ## [0.4.17] - 2026-09-30
 
 ### Added

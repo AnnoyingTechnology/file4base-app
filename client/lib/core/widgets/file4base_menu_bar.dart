@@ -34,6 +34,9 @@ class File4BaseMenuBar extends StatelessWidget {
   final VoidCallback? onResetZoom;
   final ValueChanged<double>? onSelectZoom;
   final double? zoomLevel;
+  final bool isAuthenticated;
+  final VoidCallback? onSignIn;
+  final VoidCallback? onSignOut;
 
   const File4BaseMenuBar({
     super.key,
@@ -68,6 +71,9 @@ class File4BaseMenuBar extends StatelessWidget {
     this.onResetZoom,
     this.onSelectZoom,
     this.zoomLevel,
+    this.isAuthenticated = true,
+    this.onSignIn,
+    this.onSignOut,
   });
 
   void _showNotice(BuildContext context, String title, String message) {
@@ -188,6 +194,20 @@ class File4BaseMenuBar extends StatelessWidget {
   Widget _buildFileMenu(BuildContext context) {
     return SubmenuButton(
       menuChildren: [
+        if (!isAuthenticated) ...[
+          MenuItemButton(
+            onPressed: onSignIn,
+            shortcut: const SingleActivator(LogicalKeyboardKey.keyL, meta: true),
+            child: const Row(
+              children: [
+                Icon(Icons.login, size: 16, color: Color(0xFF1E88E5)),
+                SizedBox(width: 8),
+                Text('Sign In...'),
+              ],
+            ),
+          ),
+          const Divider(height: 1),
+        ],
         MenuItemButton(
           onPressed: onNewDatabase ?? () => _showNotice(context, 'New Database', 'Create a new table in Manage > Database.'),
           shortcut: const SingleActivator(LogicalKeyboardKey.keyN, meta: true),
@@ -205,21 +225,29 @@ class File4BaseMenuBar extends StatelessWidget {
         ),
         const Divider(height: 1),
         MenuItemButton(
-          onPressed: onSave ?? () => _showNotice(context, 'Save', 'Solution saved.'),
+          onPressed: !isAuthenticated
+              ? () => _showNotice(context, 'Authentication Required', 'Please sign in to save solution changes.')
+              : (onSave ?? () => _showNotice(context, 'Save', 'Solution saved.')),
           shortcut: const SingleActivator(LogicalKeyboardKey.keyS, meta: true),
           child: const Text('Save'),
         ),
         MenuItemButton(
-          onPressed: onSaveAs ?? () => _showNotice(context, 'Save As', 'Save solution with a new name.'),
+          onPressed: !isAuthenticated
+              ? () => _showNotice(context, 'Authentication Required', 'Please sign in to save solution changes.')
+              : (onSaveAs ?? () => _showNotice(context, 'Save As', 'Save solution with a new name.')),
           shortcut: const SingleActivator(LogicalKeyboardKey.keyS, meta: true, shift: true),
           child: const Text('Save As...'),
         ),
         MenuItemButton(
-          onPressed: onSaveCopyAs ?? () => _showNotice(context, 'Save a Copy As', 'Full copy or database data file.'),
+          onPressed: !isAuthenticated
+              ? () => _showNotice(context, 'Authentication Required', 'Please sign in to save a copy.')
+              : (onSaveCopyAs ?? () => _showNotice(context, 'Save a Copy As', 'Full copy or database data file.')),
           child: const Text('Save a Copy As...'),
         ),
         MenuItemButton(
-          onPressed: onExportData ?? () => _showNotice(context, 'Export Data', 'Saves a .f4data snapshot of all database rows. Structure is auto-saved separately.'),
+          onPressed: !isAuthenticated
+              ? () => _showNotice(context, 'Authentication Required', 'Please sign in to export database data.')
+              : (onExportData ?? () => _showNotice(context, 'Export Data', 'Saves a .f4data snapshot of all database rows.')),
           child: const Text('Export Data...'),
         ),
         const Divider(height: 1),
@@ -242,6 +270,19 @@ class File4BaseMenuBar extends StatelessWidget {
           child: const Text('Open Recent'),
         ),
         const Divider(height: 1),
+        if (isAuthenticated && onSignOut != null) ...[
+          MenuItemButton(
+            onPressed: onSignOut,
+            child: const Row(
+              children: [
+                Icon(Icons.lock_outline, size: 16, color: Colors.orange),
+                SizedBox(width: 8),
+                Text('Sign Out (Lock Session)'),
+              ],
+            ),
+          ),
+          const Divider(height: 1),
+        ],
         MenuItemButton(
           onPressed: () => _showNotice(context, 'Close', 'Workspace window closed.'),
           shortcut: const SingleActivator(LogicalKeyboardKey.keyW, meta: true),
@@ -251,7 +292,9 @@ class File4BaseMenuBar extends StatelessWidget {
         SubmenuButton(
           menuChildren: [
             MenuItemButton(
-              onPressed: onManageDatabase,
+              onPressed: !isAuthenticated
+                  ? (onSignIn ?? () => _showNotice(context, 'Authentication Required', 'Please sign in to manage database schema.'))
+                  : onManageDatabase,
               shortcut: const SingleActivator(LogicalKeyboardKey.keyD, meta: true, shift: true),
               child: const Text('Database...'),
             ),
@@ -479,29 +522,41 @@ class File4BaseMenuBar extends StatelessWidget {
 
   // 3. View Menu
   Widget _buildViewMenu(BuildContext context) {
+    void handleModeChange(OperationalMode mode) {
+      if (!isAuthenticated) {
+        if (onSignIn != null) {
+          onSignIn!();
+        } else {
+          _showNotice(context, 'Authentication Required', 'Please sign in to access database views.');
+        }
+        return;
+      }
+      onModeChanged(mode);
+    }
+
     return SubmenuButton(
       menuChildren: [
         MenuItemButton(
           leadingIcon: activeMode == OperationalMode.browse ? const Icon(Icons.check, size: 14) : null,
-          onPressed: () => onModeChanged(OperationalMode.browse),
+          onPressed: () => handleModeChange(OperationalMode.browse),
           shortcut: const SingleActivator(LogicalKeyboardKey.keyB, meta: true),
           child: const Text('Browse Mode'),
         ),
         MenuItemButton(
           leadingIcon: activeMode == OperationalMode.find ? const Icon(Icons.check, size: 14) : null,
-          onPressed: () => onModeChanged(OperationalMode.find),
+          onPressed: () => handleModeChange(OperationalMode.find),
           shortcut: const SingleActivator(LogicalKeyboardKey.keyF, meta: true),
           child: const Text('Find Mode'),
         ),
         MenuItemButton(
           leadingIcon: activeMode == OperationalMode.layout ? const Icon(Icons.check, size: 14) : null,
-          onPressed: () => onModeChanged(OperationalMode.layout),
+          onPressed: () => handleModeChange(OperationalMode.layout),
           shortcut: const SingleActivator(LogicalKeyboardKey.keyL, meta: true),
           child: const Text('Layout Mode'),
         ),
         MenuItemButton(
           leadingIcon: activeMode == OperationalMode.preview ? const Icon(Icons.check, size: 14) : null,
-          onPressed: () => onModeChanged(OperationalMode.preview),
+          onPressed: () => handleModeChange(OperationalMode.preview),
           shortcut: const SingleActivator(LogicalKeyboardKey.keyU, meta: true),
           child: const Text('Preview Mode'),
         ),

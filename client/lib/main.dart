@@ -213,8 +213,36 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
       }
       AutoSaveService.instance.markDirty();
     } else {
-      await _checkServer();
+      // User cancelled login or was not authenticated:
+      // Keep application strictly locked, clear any tables/records, and do NOT load database data!
+      if (mounted) {
+        setState(() {
+          _currentUser = null;
+          _tables = [];
+          _selectedTable = null;
+          _activeLayout = null;
+          _serverLayouts = [];
+          _serverStatus = 'Online (Locked)';
+        });
+      }
     }
+  }
+
+  void _handleSignOut() {
+    setState(() {
+      _currentUser = null;
+      _tables = [];
+      _selectedTable = null;
+      _activeLayout = null;
+      _serverLayouts = [];
+      _serverStatus = 'Online (Locked)';
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Sesión cerrada. Acceso a base de datos protegido.'),
+        duration: Duration(seconds: 2),
+      ),
+    );
   }
 
   Future<void> _checkServer() async {
@@ -223,12 +251,16 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
       final health = await client.checkHealth();
       if (mounted) {
         setState(() {
-          _serverStatus = 'Online (${health['engine']})';
-          if (health['active_database'] != null) {
+          _serverStatus = _currentUser != null
+              ? 'Online (${health['engine']} - ${_currentUser!.username})'
+              : 'Online (${health['engine']} - Locked)';
+          if (health['active_database'] != null && _activeDatabaseName.isEmpty) {
             _activeDatabaseName = health['active_database'].toString();
           }
         });
-        _loadTables();
+        if (_currentUser != null) {
+          _loadTables();
+        }
       }
     } catch (_) {
       if (mounted) {
@@ -247,7 +279,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
     }
     final client = ref.read(apiClientProvider);
     try {
-      final perms = await client.getUserPermissions(_currentUser!.id);
+      final perms = await client.getUserPermissions(_currentUser!.id, database: _activeDatabaseName);
       if (mounted) {
         setState(() {
           _userPermissions = {for (final p in perms) p.layoutId: p.accessLevel};
@@ -257,6 +289,19 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
   }
 
   Future<void> _loadTables({String? targetLayoutId}) async {
+    if (_currentUser == null) {
+      if (mounted) {
+        setState(() {
+          _tables = [];
+          _selectedTable = null;
+          _activeLayout = null;
+          _serverLayouts = [];
+          _isLoadingTables = false;
+        });
+      }
+      return;
+    }
+
     final client = ref.read(apiClientProvider);
     setState(() => _isLoadingTables = true);
     try {
@@ -541,6 +586,11 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
   }
 
   Future<void> _changeMode(OperationalMode newMode) async {
+    if (_currentUser == null) {
+      _startAuthSequence();
+      return;
+    }
+
     final currentMode = ref.read(operationalModeProvider);
     if (currentMode == newMode) return;
 
@@ -683,16 +733,17 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
       layouts = await client.listLayouts();
     } catch (_) {}
     try {
-      final users = await client.listUsers();
+      final users = await client.listUsers(database: _activeDatabaseName);
       for (final u in users) {
         List<UserLayoutPermissionModel> perms = [];
         try {
-          perms = await client.getUserPermissions(u.id);
+          perms = await client.getUserPermissions(u.id, database: _activeDatabaseName);
         } catch (_) {}
         usersList.add({
           'id': u.id,
           'username': u.username,
           'role': u.role,
+          'is_active': u.isActive,
           'permissions': perms.map((p) => {
             'layout_id': p.layoutId,
             'layout_name': p.layoutName,
@@ -1087,12 +1138,25 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
               children: [
                 File4BaseMenuBar(
                   activeMode: mode,
+                  isAuthenticated: _currentUser != null,
+                  onSignIn: _startAuthSequence,
+                  onSignOut: _handleSignOut,
                   onModeChanged: _changeMode,
                   onManageDatabase: () async {
+                    if (_currentUser == null) {
+                      _startAuthSequence();
+                      return;
+                    }
                     await ManageDatabaseDialog.show(context);
                     _loadTables();
                   },
-                  onManageLayouts: _handleManageLayouts,
+                  onManageLayouts: () {
+                    if (_currentUser == null) {
+                      _startAuthSequence();
+                      return;
+                    }
+                    _handleManageLayouts();
+                  },
                   onManageSecurity: () async {
                     if (_currentUser == null) {
                       _startAuthSequence();
@@ -1113,11 +1177,18 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                       client,
                       _currentUser!,
                       databaseName: _activeDatabaseName,
+                      onModified: () async {
+                        AutoSaveService.instance.markDirty();
+                      },
                     );
                     await _loadUserPermissions();
                     await _loadTables();
                   },
                   onManageScripts: () async {
+                    if (_currentUser == null) {
+                      _startAuthSequence();
+                      return;
+                    }
                     final client = ref.read(apiClientProvider);
                     await ScriptWorkspaceDialog.show(
                       context,
@@ -1126,6 +1197,10 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                     );
                   },
                   onScriptWorkspace: () async {
+                    if (_currentUser == null) {
+                      _startAuthSequence();
+                      return;
+                    }
                     final client = ref.read(apiClientProvider);
                     await ScriptWorkspaceDialog.show(
                       context,
@@ -1176,7 +1251,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                   child: Row(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      if (_isToolbarVisible && mode != OperationalMode.layout)
+                      if (_isToolbarVisible && mode != OperationalMode.layout && _currentUser != null)
                         File4BaseStatusSidebar(
                           layouts: _serverLayouts,
                           selectedLayout: _serverLayouts.where((l) => l.id == _activeLayout?.id).firstOrNull ??
@@ -1605,6 +1680,10 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
   }
 
   Widget _buildBody(BuildContext context, OperationalMode mode) {
+    if (_currentUser == null) {
+      return _buildProtectedWorkspace(context);
+    }
+
     if (_isLoadingTables) {
       return const Center(child: CircularProgressIndicator());
     }
@@ -1676,6 +1755,9 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
               client,
               _currentUser!,
               databaseName: _activeDatabaseName,
+              onModified: () async {
+                AutoSaveService.instance.markDirty();
+              },
             );
             await _loadUserPermissions();
             await _loadTables();
@@ -1803,6 +1885,149 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
         const SizedBox(height: 4),
         Text(label, style: const TextStyle(fontSize: 11, color: Colors.grey)),
       ],
+    );
+  }
+
+  Widget _buildProtectedWorkspace(BuildContext context) {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+
+    return Container(
+      color: theme.colorScheme.surfaceContainerHighest.withOpacity(0.2),
+      child: Center(
+        child: SingleChildScrollView(
+          child: Card(
+            elevation: 4,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+              side: BorderSide(
+                color: isDark ? Colors.grey.shade800 : Colors.grey.shade300,
+              ),
+            ),
+            child: Container(
+              width: 540,
+              padding: const EdgeInsets.symmetric(horizontal: 36.0, vertical: 32.0),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 72,
+                    height: 72,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF1E88E5).withOpacity(0.12),
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                        color: const Color(0xFF1E88E5).withOpacity(0.35),
+                        width: 2,
+                      ),
+                    ),
+                    child: const Icon(
+                      Icons.shield_outlined,
+                      size: 40,
+                      color: Color(0xFF1E88E5),
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  const Text(
+                    'Solución Protegida / Iniciar Sesión',
+                    style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Esta base de datos está protegida contra acceso no autorizado. Para examinar registros, presentaciones y esquemas, inicia sesión con una cuenta autorizada.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: theme.colorScheme.onSurfaceVariant,
+                      fontSize: 13,
+                      height: 1.4,
+                    ),
+                  ),
+                  const SizedBox(height: 18),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: isDark ? const Color(0xFF161B22) : const Color(0xFFF3F4F6),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                        color: isDark ? const Color(0xFF30363D) : const Color(0xFFE5E7EB),
+                      ),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.dns_outlined, size: 14, color: Colors.blueAccent),
+                        const SizedBox(width: 8),
+                        Text(
+                          'Base de datos: $_activeDatabaseName',
+                          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton.icon(
+                      icon: const Icon(Icons.login, size: 18),
+                      label: const Text('Iniciar Sesión en Base de Datos'),
+                      style: FilledButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                      ),
+                      onPressed: _startAuthSequence,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          icon: const Icon(Icons.folder_open, size: 16),
+                          label: const Text('Abrir Solución (.f4p)'),
+                          style: OutlinedButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                          ),
+                          onPressed: _handleOpenSolution,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          icon: const Icon(Icons.add_box_outlined, size: 16),
+                          label: const Text('Nueva Solución...'),
+                          style: OutlinedButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                          ),
+                          onPressed: _handleNewDatabase,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 14),
+                  TextButton.icon(
+                    icon: const Icon(Icons.cloud_outlined, size: 16),
+                    label: const Text('Conectar a Servidor Remoto...'),
+                    onPressed: () {
+                      final currentUrl = ref.read(serverUrlProvider);
+                      ServerConnectionDialog.show(
+                        context,
+                        currentUrl: currentUrl,
+                        onConnect: (newUrl) {
+                          ref.read(serverUrlProvider.notifier).setUrl(newUrl);
+                          _checkServer();
+                        },
+                      );
+                    },
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

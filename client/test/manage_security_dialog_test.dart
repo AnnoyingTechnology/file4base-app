@@ -142,5 +142,83 @@ void main() {
       // Check New Account button
       expect(find.text('Nueva cuenta...'), findsOneWidget);
     });
+
+    testWidgets('scopes API requests to databaseName and calls onModified on changes', (tester) async {
+      tester.view.physicalSize = const Size(1280, 800);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(() => tester.view.resetPhysicalSize());
+
+      String? requestedDbParam;
+      String? requestedHeaderDb;
+      bool onModifiedCalled = false;
+
+      final mockClient = MockClient((request) async {
+        if (request.url.path == '/api/v1/security/users') {
+          requestedDbParam = request.url.queryParameters['database'];
+          requestedHeaderDb = request.headers['X-Database-Name'];
+          return http.Response(
+            jsonEncode([
+              {
+                'id': 'owner-1',
+                'username': 'admin_root',
+                'role': 'owner',
+                'is_active': true,
+              },
+              {
+                'id': 'user-2',
+                'username': 'operator_bob',
+                'role': 'user',
+                'is_active': true,
+              },
+            ]),
+            200,
+            headers: {'content-type': 'application/json'},
+          );
+        }
+        if (request.url.path.contains('/api/v1/security/users/user-2')) {
+          return http.Response('{"status":"updated"}', 200, headers: {'content-type': 'application/json'});
+        }
+        if (request.url.path == '/api/v1/schemas/layouts') {
+          return http.Response('[]', 200, headers: {'content-type': 'application/json'});
+        }
+        if (request.url.path.contains('/permissions')) {
+          return http.Response('[]', 200, headers: {'content-type': 'application/json'});
+        }
+        return http.Response('Not found', 404);
+      });
+
+      final apiClient = ApiClient(baseUrl: 'http://test-server:8080', httpClient: mockClient);
+      const currentUser = UserModel(id: 'owner-1', username: 'admin_root', role: 'owner', isActive: true);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: ManageSecurityDialog(
+              apiClient: apiClient,
+              currentUser: currentUser,
+              databaseName: 'isolated_payroll_db',
+              onModified: () {
+                onModifiedCalled = true;
+              },
+            ),
+          ),
+        ),
+      );
+
+      await tester.pumpAndSettle();
+
+      // Verify that databaseName was transmitted to the API
+      expect(requestedDbParam, 'isolated_payroll_db');
+      expect(requestedHeaderDb, 'isolated_payroll_db');
+
+      // Tap toggle on user-2 to deactivate
+      final switchFinder = find.byType(Switch);
+      expect(switchFinder, findsNWidgets(2));
+      await tester.tap(switchFinder.at(1));
+      await tester.pumpAndSettle();
+
+      // Verify onModified was called
+      expect(onModifiedCalled, isTrue);
+    });
   });
 }

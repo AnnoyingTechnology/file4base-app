@@ -568,9 +568,13 @@ Authenticates a user with username and password, optionally switching active dat
 ---
 
 ### `GET /api/v1/security/users`
-Lists all user accounts in the active database.
+Lists all user accounts in the specified database (via `?database=<name>` query param, `X-Database-Name` header, or active database fallback). User accounts are strictly isolated per database.
 
-#### Response `200 OK`
+#### Query Parameters
+- `database` (optional, string): Name of the database/catalog to query users from.
+
+#### Headers
+- `X-Database-Name` (optional, string): Alternative database header.
 ```json
 [
   {
