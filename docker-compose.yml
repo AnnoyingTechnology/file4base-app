@@ -43,13 +43,13 @@ services:
     networks:
       - file4base-net
 
-  # Go Backend Core API Service (file4base-app-api)
+  # Go Backend Core API Service (file4base-api)
   api:
     build:
       context: ./server
       dockerfile: Dockerfile
-    image: file4base-app-api
-    container_name: file4base-app-api
+    image: file4base-api
+    container_name: file4base-api
     restart: unless-stopped
     ports:
       - "8080:8080"
@@ -71,6 +71,7 @@ services:
         aliases:
           - api
           - server
+          - file4base-api
 
   # WebDirect Client (Web UI served when launched as a Server via docker compose)
   web:

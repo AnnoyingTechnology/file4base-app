@@ -1,0 +1,746 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>File4Base Documentation · Rapid Application Database Engine</title>
+  <meta name="description" content="Comprehensive documentation for File4Base, the modern open-source rapid application database platform for macOS, Windows, Linux, and WebDirect.">
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%231e88e5'><path d='M4 4h16v16H4V4zm2 2v12h12V6H6zm2 2h8v2H8V8zm0 4h8v2H8v-2zm0 4h5v2H8v-2z'/></svg>">
+  <style>
+    :root {
+      --bg-primary: #0f172a;
+      --bg-secondary: #1e293b;
+      --bg-sidebar: #0b1120;
+      --bg-card: #1e293b;
+      --border-color: #334155;
+      --text-primary: #f8fafc;
+      --text-secondary: #94a3b8;
+      --text-muted: #64748b;
+      --accent: #38bdf8;
+      --accent-hover: #0284c7;
+      --accent-gradient: linear-gradient(135deg, #0284c7 0%, #38bdf8 100%);
+      --code-bg: #090d16;
+      --tag-bg: rgba(56, 189, 248, 0.12);
+      --tag-border: rgba(56, 189, 248, 0.3);
+      --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: var(--font-sans);
+      background-color: var(--bg-primary);
+      color: var(--text-primary);
+      line-height: 1.6;
+      display: flex;
+      flex-direction: column;
+      min-height: 100vh;
+    }
+
+    /* Top Navigation Bar */
+    header.top-nav {
+      position: sticky;
+      top: 0;
+      z-index: 50;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0.75rem 2rem;
+      background: rgba(15, 23, 42, 0.85);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border-color);
+    }
+
+    .brand-group {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      text-decoration: none;
+      color: inherit;
+    }
+
+    .brand-icon {
+      width: 32px;
+      height: 32px;
+      background: var(--accent-gradient);
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 4px 12px rgba(56, 189, 248, 0.3);
+    }
+
+    .brand-icon svg {
+      width: 20px;
+      height: 20px;
+      fill: #ffffff;
+    }
+
+    .brand-title {
+      font-size: 1.25rem;
+      font-weight: 800;
+      letter-spacing: -0.025em;
+    }
+
+    .version-pill {
+      font-size: 0.75rem;
+      font-weight: 600;
+      padding: 0.15rem 0.5rem;
+      border-radius: 9999px;
+      background: var(--tag-bg);
+      color: var(--accent);
+      border: 1px solid var(--tag-border);
+    }
+
+    .nav-actions {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+
+    .search-box {
+      position: relative;
+      display: flex;
+      align-items: center;
+    }
+
+    .search-box input {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      padding: 0.45rem 0.85rem 0.45rem 2.2rem;
+      color: var(--text-primary);
+      font-size: 0.85rem;
+      outline: none;
+      width: 240px;
+      transition: all 0.2s ease;
+    }
+
+    .search-box input:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.2);
+      width: 280px;
+    }
+
+    .search-box svg {
+      position: absolute;
+      left: 0.75rem;
+      width: 14px;
+      height: 14px;
+      fill: var(--text-muted);
+    }
+
+    .nav-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-size: 0.85rem;
+      font-weight: 600;
+      padding: 0.45rem 0.9rem;
+      border-radius: 8px;
+      text-decoration: none;
+      color: var(--text-primary);
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-color);
+      transition: all 0.2s ease;
+    }
+
+    .nav-btn:hover {
+      background: var(--border-color);
+      color: var(--accent);
+    }
+
+    .nav-btn.primary {
+      background: var(--accent);
+      color: #0f172a;
+      border-color: var(--accent);
+    }
+
+    .nav-btn.primary:hover {
+      background: var(--accent-hover);
+    }
+
+    /* Main Container Layout */
+    .app-container {
+      display: flex;
+      flex: 1;
+      max-width: 1600px;
+      margin: 0 auto;
+      width: 100%;
+    }
+
+    /* Sidebar Navigation */
+    aside.sidebar {
+      width: 280px;
+      background: var(--bg-sidebar);
+      border-right: 1px solid var(--border-color);
+      padding: 1.5rem 1rem;
+      position: sticky;
+      top: 57px;
+      height: calc(100vh - 57px);
+      overflow-y: auto;
+      flex-shrink: 0;
+    }
+
+    .sidebar-section {
+      margin-bottom: 1.5rem;
+    }
+
+    .sidebar-heading {
+      font-size: 0.75rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+      margin-bottom: 0.5rem;
+      padding-left: 0.5rem;
+    }
+
+    .sidebar-links {
+      list-style: none;
+    }
+
+    .sidebar-links a {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.45rem 0.65rem;
+      border-radius: 6px;
+      font-size: 0.875rem;
+      color: var(--text-secondary);
+      text-decoration: none;
+      transition: all 0.15s ease;
+    }
+
+    .sidebar-links a:hover, .sidebar-links a.active {
+      color: var(--accent);
+      background: rgba(56, 189, 248, 0.08);
+      font-weight: 600;
+    }
+
+    /* Main Content Area */
+    main.content-area {
+      flex: 1;
+      padding: 2.5rem 3.5rem;
+      overflow-y: auto;
+      max-width: 1020px;
+    }
+
+    h1, h2, h3, h4 {
+      color: var(--text-primary);
+      letter-spacing: -0.02em;
+    }
+
+    h1 {
+      font-size: 2.5rem;
+      font-weight: 900;
+      margin-bottom: 0.75rem;
+      line-height: 1.2;
+    }
+
+    .lead-text {
+      font-size: 1.15rem;
+      color: var(--text-secondary);
+      margin-bottom: 2rem;
+      line-height: 1.6;
+    }
+
+    h2 {
+      font-size: 1.6rem;
+      font-weight: 700;
+      margin-top: 2.5rem;
+      margin-bottom: 1rem;
+      padding-bottom: 0.5rem;
+      border-bottom: 1px solid var(--border-color);
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+    }
+
+    h3 {
+      font-size: 1.2rem;
+      font-weight: 600;
+      margin-top: 1.5rem;
+      margin-bottom: 0.75rem;
+    }
+
+    p {
+      margin-bottom: 1.25rem;
+      color: var(--text-secondary);
+    }
+
+    ul, ol {
+      margin-bottom: 1.25rem;
+      padding-left: 1.5rem;
+      color: var(--text-secondary);
+    }
+
+    li {
+      margin-bottom: 0.4rem;
+    }
+
+    /* Badges & Pills */
+    .badge {
+      display: inline-block;
+      font-size: 0.75rem;
+      font-weight: 700;
+      padding: 0.15rem 0.5rem;
+      border-radius: 6px;
+      margin-right: 0.4rem;
+      text-transform: uppercase;
+    }
+
+    .badge.get { background: rgba(34, 197, 94, 0.15); color: #4ade80; border: 1px solid rgba(34, 197, 94, 0.3); }
+    .badge.post { background: rgba(56, 189, 248, 0.15); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.3); }
+    .badge.put { background: rgba(234, 179, 8, 0.15); color: #facc15; border: 1px solid rgba(234, 179, 8, 0.3); }
+    .badge.delete { background: rgba(239, 68, 68, 0.15); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.3); }
+
+    /* Code Blocks */
+    pre {
+      background: var(--code-bg);
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      padding: 1rem 1.25rem;
+      overflow-x: auto;
+      font-family: var(--font-mono);
+      font-size: 0.85rem;
+      margin-bottom: 1.5rem;
+      color: #e2e8f0;
+      position: relative;
+    }
+
+    code {
+      font-family: var(--font-mono);
+      font-size: 0.85em;
+      background: rgba(255, 255, 255, 0.08);
+      padding: 0.15rem 0.35rem;
+      border-radius: 4px;
+      color: var(--accent);
+    }
+
+    pre code {
+      background: none;
+      padding: 0;
+      color: inherit;
+    }
+
+    /* Cards & Grids */
+    .grid-2 {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 1.25rem;
+      margin-bottom: 2rem;
+    }
+
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      padding: 1.5rem;
+      transition: transform 0.2s ease, border-color 0.2s ease;
+    }
+
+    .card:hover {
+      transform: translateY(-2px);
+      border-color: var(--accent);
+    }
+
+    .card-icon {
+      width: 40px;
+      height: 40px;
+      border-radius: 10px;
+      background: rgba(56, 189, 248, 0.15);
+      color: var(--accent);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 1rem;
+    }
+
+    .card-title {
+      font-size: 1.1rem;
+      font-weight: 700;
+      margin-bottom: 0.5rem;
+    }
+
+    /* Callouts */
+    .callout {
+      border-left: 4px solid var(--accent);
+      background: rgba(56, 189, 248, 0.06);
+      padding: 1rem 1.25rem;
+      border-radius: 0 8px 8px 0;
+      margin-bottom: 1.5rem;
+    }
+
+    .callout.warning {
+      border-left-color: #f59e0b;
+      background: rgba(245, 158, 11, 0.08);
+    }
+
+    .callout.tip {
+      border-left-color: #10b981;
+      background: rgba(16, 185, 129, 0.08);
+    }
+
+    .callout-title {
+      font-weight: 700;
+      font-size: 0.9rem;
+      margin-bottom: 0.35rem;
+      color: var(--text-primary);
+    }
+
+    /* Tables */
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 2rem;
+      font-size: 0.9rem;
+    }
+
+    th, td {
+      padding: 0.75rem 1rem;
+      text-align: left;
+      border-bottom: 1px solid var(--border-color);
+    }
+
+    th {
+      background: var(--bg-secondary);
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+
+    /* Footer */
+    footer.site-footer {
+      border-top: 1px solid var(--border-color);
+      padding: 2rem;
+      text-align: center;
+      color: var(--text-muted);
+      font-size: 0.85rem;
+      background: var(--bg-sidebar);
+    }
+
+    @media (max-width: 900px) {
+      aside.sidebar { display: none; }
+      main.content-area { padding: 1.5rem; }
+      .search-box input { width: 160px; }
+      .search-box input:focus { width: 200px; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Top Header Navigation -->
+  <header class="top-nav">
+    <a href="#" class="brand-group">
+      <div class="brand-icon">
+        <svg viewBox="0 0 24 24"><path d="M4 4h16v16H4V4zm2 2v12h12V6H6zm2 2h8v2H8V8zm0 4h8v2H8v-2zm0 4h5v2H8v-2z"/></svg>
+      </div>
+      <span class="brand-title">File4Base</span>
+      <span class="version-pill">v0.4.18</span>
+    </a>
+
+    <div class="nav-actions">
+      <div class="search-box">
+        <svg viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
+        <input type="text" id="docSearch" placeholder="Search documentation...">
+      </div>
+      <a href="https://github.com/file4base/file4base-app" target="_blank" rel="noopener" class="nav-btn">
+        <svg width="16" height="16" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/></svg>
+        GitHub
+      </a>
+      <a href="https://github.com/file4base/file4base-app/issues" target="_blank" rel="noopener" class="nav-btn primary">
+        Service & Issues
+      </a>
+    </div>
+  </header>
+
+  <!-- Content Container -->
+  <div class="app-container">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="sidebar-section">
+        <div class="sidebar-heading">Getting Started</div>
+        <ul class="sidebar-links">
+          <li><a href="#overview" class="active">Overview & Architecture</a></li>
+          <li><a href="#quickstart">Quick Start & Docker</a></li>
+          <li><a href="#solutions">Solutions & Packages (.f4p)</a></li>
+        </ul>
+      </div>
+
+      <div class="sidebar-section">
+        <div class="sidebar-heading">Operational Modes</div>
+        <ul class="sidebar-links">
+          <li><a href="#browse-mode">Browse Mode</a></li>
+          <li><a href="#find-mode">Find Mode</a></li>
+          <li><a href="#layout-studio">Layout Mode Studio</a></li>
+          <li><a href="#preview-mode">Preview & Print Mode</a></li>
+        </ul>
+      </div>
+
+      <div class="sidebar-section">
+        <div class="sidebar-heading">Data & Logic Engine</div>
+        <ul class="sidebar-links">
+          <li><a href="#manage-database">Manage Database & Schema</a></li>
+          <li><a href="#calc-engine">Calculations & Formulas</a></li>
+          <li><a href="#script-workspace">Script Workspace</a></li>
+          <li><a href="#security-users">Security & User Accounts</a></li>
+        </ul>
+      </div>
+
+      <div class="sidebar-section">
+        <div class="sidebar-heading">API & Deployment</div>
+        <ul class="sidebar-links">
+          <li><a href="#rest-api">REST API Reference</a></li>
+          <li><a href="#docker-standards">Docker Standards</a></li>
+          <li><a href="#multiplatform">macOS & Desktop Targets</a></li>
+        </ul>
+      </div>
+
+      <div class="sidebar-section">
+        <div class="sidebar-heading">Support & Community</div>
+        <ul class="sidebar-links">
+          <li><a href="#issues-guide">Working with Issues</a></li>
+          <li><a href="#community">Community & Contributing</a></li>
+        </ul>
+      </div>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="content-area">
+      <!-- Overview Section -->
+      <section id="overview">
+        <h1>File4Base Documentation</h1>
+        <p class="lead-text">
+          File4Base is a modern, open-source rapid application database platform for rapid development. Built with Go (Clean Architecture, DBAL) on the backend and Flutter (Desktop & WebDirect) on the frontend.
+        </p>
+
+        <div class="grid-2">
+          <div class="card">
+            <div class="card-icon">⚡</div>
+            <div class="card-title">Multi-Engine DBAL</div>
+            <p>PostgreSQL 16 default engine with optional MariaDB/MySQL support, dynamic DDL migrations, and live catalogs.</p>
+          </div>
+          <div class="card">
+            <div class="card-icon">🎨</div>
+            <div class="card-title">FileMaker-Style Studio</div>
+            <p>Full-screen visual layout designer with 16 drawing tools, 8-handle resizing, inspector palette, and draggable parts.</p>
+          </div>
+          <div class="card">
+            <div class="card-icon">🔒</div>
+            <div class="card-title">Database-Scoped Security</div>
+            <p>Strict catalog-level user isolation, bcrypt password hashing, granular layout permissions, and protected unauthenticated workspace.</p>
+          </div>
+          <div class="card">
+            <div class="card-icon">📦</div>
+            <div class="card-title">Self-Contained .f4p Bundles</div>
+            <p>MessagePack-packaged database solutions with tables, columns, layouts, scripts, and users with auto-save support.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- Quickstart Section -->
+      <section id="quickstart">
+        <h2>🚀 Quick Start with Docker</h2>
+        <p>Run the full File4Base stack with a single Docker Compose command:</p>
+
+        <pre><code># 1. Clone repository
+git clone https://github.com/file4base/file4base-app.git
+cd file4base-app
+
+# 2. Launch database, backend API, and WebDirect client
+docker compose up -d
+
+# 3. Access web client
+open http://localhost:3000</code></pre>
+
+        <p>The stack exposes:</p>
+        <ul>
+          <li><strong>WebDirect Client</strong>: <code>http://localhost:3000</code> (served via Nginx)</li>
+          <li><strong>Backend Core API</strong>: <code>http://localhost:8080</code> (REST & WebSockets)</li>
+          <li><strong>OpenAPI / Swagger UI</strong>: <code>http://localhost:8080/swagger</code></li>
+          <li><strong>PostgreSQL 16</strong>: <code>localhost:5432</code> (database: <code>file4base_dev</code>)</li>
+        </ul>
+      </section>
+
+      <!-- Operational Modes -->
+      <section id="browse-mode">
+        <h2>📋 The 4 Operational Modes</h2>
+        <p>File4Base mirrors the classic 4-mode operational state machine:</p>
+
+        <h3>1. Browse Mode (Cmd/Ctrl + B)</h3>
+        <p>Default interactive data view. Navigate records with standard slider controls, create, duplicate, and delete records, sort columns, and edit layout fields with live validation.</p>
+
+        <h3 id="find-mode">2. Find Mode (Cmd/Ctrl + F)</h3>
+        <p>Enter search criteria directly into form fields. Supports operators like <code>=</code>, <code>&gt;</code>, <code>&lt;</code>, <code>...</code> (range), and text searches to filter the active found set.</p>
+
+        <h3 id="layout-studio">3. Layout Mode Studio (Cmd/Ctrl + L)</h3>
+        <p>FileMaker Pro-style studio workspace featuring:</p>
+        <ul>
+          <li><strong>Top Ribbon Palette</strong>: Selection pointer, Text tool, Line, Rectangle, Rounded Rectangle, Oval, Field tool, Button, Popover Button, Button Bar, Tab Control, Portal, Chart, Web Viewer, and Part tool.</li>
+          <li><strong>Left Fields & Objects Pane</strong>: Drag & drop database columns straight onto the canvas, filter fields, customize placement orientation and control types.</li>
+          <li><strong>Draggable Canvas Parts</strong>: Real-time draggable divider bars for <code>Header</code>, <code>Body</code>, and <code>Footer</code> with live point height badges and 8-handle object resizing.</li>
+          <li><strong>Right Inspector (4 Tabs)</strong>: Geometry coordinates, Fill/Border styles, Data bindings, and Typography.</li>
+          <li><strong>Exit Layout Button</strong>: Green-accented button to save changes and return seamlessly to Browse mode.</li>
+        </ul>
+
+        <h3 id="preview-mode">4. Preview & Print Mode (Cmd/Ctrl + U)</h3>
+        <p>WYSIWYG print preview simulating pagination, margins, page setup, and PDF export.</p>
+      </section>
+
+      <!-- Manage Database & Schema -->
+      <section id="manage-database">
+        <h2>🗄️ Manage Database & Schema</h2>
+        <p>Accessed via <strong>File &gt; Manage &gt; Database...</strong>:</p>
+        <ul>
+          <li><strong>Tables Tab</strong>: Create, rename, duplicate, empty, or delete tables. All mutations update physical database tables and sync to <code>sys_tables</code>.</li>
+          <li><strong>Fields Tab</strong>: Add typed columns (<code>Text</code>, <code>Number</code>, <code>Date</code>, <code>Time</code>, <code>Timestamp</code>, <code>Container</code>, <code>Calculation</code>, <code>Summary</code>).</li>
+          <li><strong>Relationships Graph</strong>: Visual node canvas with drag-and-drop relationship links, table occurrences, and cascade rules.</li>
+        </ul>
+      </section>
+
+      <!-- Calculations Engine -->
+      <section id="calc-engine">
+        <h2>🧮 Calculations & Formulas</h2>
+        <p>Calculation fields evaluate dynamically on record insert or update using an embedded formula parser.</p>
+        <pre><code>// Example: Total with tax calculation
+Price * Quantity * 1.21
+
+// Example: Full name concatenation
+FirstName & " " & LastName</code></pre>
+      </section>
+
+      <!-- Script Workspace -->
+      <section id="script-workspace">
+        <h2>⚙️ Script Workspace</h2>
+        <p>Automate business workflows using visual block steps:</p>
+        <ul>
+          <li><strong>Navigation</strong>: Go to Layout, Go to Record, Go to Field.</li>
+          <li><strong>Editing</strong>: Set Field, New Record, Delete Record.</li>
+          <li><strong>Logic</strong>: If, Else If, Else, End If, Loop, Exit Loop If.</li>
+          <li><strong>Execution</strong>: Run Script, Pause/Resume, Exit Script.</li>
+        </ul>
+      </section>
+
+      <!-- Security & User Accounts -->
+      <section id="security-users">
+        <h2>🛡️ Security & User Accounts (v0.4.18)</h2>
+        <p>Security is strictly catalog-isolated:</p>
+        <ul>
+          <li><strong>Per-Database Accounts</strong>: Accounts belong exclusively to their respective database and solution file.</li>
+          <li><strong>Roles</strong>: <code>owner</code> (full schema & security control), <code>admin</code> (table & layout editing), <code>user</code> (data browse/find only).</li>
+          <li><strong>Granular Layout Permissions</strong>: Assign <code>Read-Write</code>, <code>Read-Only</code>, or <code>No Access</code> per layout.</li>
+          <li><strong>Protected Workspace Lock</strong>: Cancelling authentication immediately locks the application and purges in-memory tables and records.</li>
+        </ul>
+      </section>
+
+      <!-- Docker Standards -->
+      <section id="docker-standards">
+        <h2>🐳 Docker Infrastructure Standards</h2>
+        <p>All containers and services strictly adhere to the <code>file4base-</code> prefix:</p>
+        <table>
+          <thead>
+            <tr>
+              <th>Container Name</th>
+              <th>Image</th>
+              <th>Host Port</th>
+              <th>Role</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>file4base-api</code></td>
+              <td><code>file4base-api</code></td>
+              <td><code>8080:8080</code></td>
+              <td>Go REST API & WebSocket Backend</td>
+            </tr>
+            <tr>
+              <td><code>file4base-web</code></td>
+              <td><code>file4base-web</code></td>
+              <td><code>3000:80</code></td>
+              <td>Nginx WebDirect Static Proxy</td>
+            </tr>
+            <tr>
+              <td><code>file4base-postgres</code></td>
+              <td><code>postgres:16-alpine</code></td>
+              <td><code>5432:5432</code></td>
+              <td>Primary Relational Database</td>
+            </tr>
+            <tr>
+              <td><code>file4base-mariadb</code></td>
+              <td><code>mariadb:11-jammy</code></td>
+              <td><code>3306:3306</code></td>
+              <td>Optional MariaDB Engine Profile</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <!-- Working with Issues -->
+      <section id="issues-guide">
+        <h2>💡 Service & Support — Working with GitHub Issues</h2>
+        <div class="callout tip">
+          <div class="callout-title">Community & Support Guidelines</div>
+          We welcome bug reports, feature suggestions, and pull requests! Please follow these best practices to ensure fast triage and resolution.
+        </div>
+
+        <ol>
+          <li>
+            <strong>Search Before Creating</strong>:
+            Visit <a href="https://github.com/file4base/file4base-app/issues" target="_blank" rel="noopener">GitHub Issues</a> and search existing open and closed issues before submitting a new one.
+          </li>
+          <li>
+            <strong>Use Clear Descriptive Titles</strong>:
+            Prefix your issue title with tags like <code>[Bug]</code>, <code>[Feature]</code>, <code>[Documentation]</code>, or <code>[Desktop]</code> (e.g. <code>[Bug] Layout divider handle snaps incorrectly on Safari</code>).
+          </li>
+          <li>
+            <strong>Provide Reproduction Steps</strong>:
+            Include exact steps: 1) Open Solution, 2) Switch to Layout Mode, 3) Resize part divider.
+          </li>
+          <li>
+            <strong>Include Environment Details</strong>:
+            Always state:
+            <ul>
+              <li><strong>File4Base Version</strong>: (e.g. <code>v0.4.18</code>)</li>
+              <li><strong>Operating System</strong>: macOS (Apple Silicon / Intel), Windows 11, Ubuntu 24.04, or Web Browser (Chrome/Firefox/Safari).</li>
+              <li><strong>Database Engine</strong>: PostgreSQL 16 or MariaDB 11.</li>
+            </ul>
+          </li>
+          <li>
+            <strong>Attach Logs & Screenshots</strong>:
+            Attach server logs (<code>docker logs file4base-api</code>) and browser console or terminal stack traces.
+          </li>
+        </ol>
+
+        <p>
+          <a href="https://github.com/file4base/file4base-app/issues" target="_blank" rel="noopener" class="nav-btn primary">
+            Open File4Base GitHub Issues
+          </a>
+        </p>
+      </section>
+
+    </main>
+  </div>
+
+  <!-- Footer -->
+  <footer class="site-footer">
+    <p>© 2024-2026 File4Base Project · Licensed under GNU General Public License v3.0 (GPL-3.0) · Built with Go & Flutter</p>
+  </footer>
+
+  <script>
+    // Realtime search filtering for sidebar and sections
+    const searchInput = document.getElementById('docSearch');
+    searchInput.addEventListener('input', (e) => {
+      const q = e.target.value.toLowerCase().trim();
+      document.querySelectorAll('main.content-area section').forEach(sec => {
+        const text = sec.innerText.toLowerCase();
+        sec.style.display = (!q || text.includes(q)) ? 'block' : 'none';
+      });
+    });
+  </script>
+</body>
+</html>

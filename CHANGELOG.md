@@ -9,6 +9,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.19] - 2026-09-30
+
+### Added
+- **GitHub Pages Documentation Website (`https://file4base.github.io/file4base-app/`)**:
+  - Published comprehensive single-page documentation app at `docs/index.html` featuring responsive sidebar navigation, real-time search, dark modern theme, and detailed guides for all 4 operational modes, schema management, calculations, script workspace, database-isolated security, and REST API.
+  - Added automated CI/CD deployment workflow `.github/workflows/deploy_docs.yml` using `actions/deploy-pages@v4` to continuously build and publish documentation upon pushes to `main`.
+- **Help Menu Activation & Interactive Service & Support Guide**:
+  - Activated all Help menu items in `File4BaseMenuBar`:
+    - `File4Base Help`: opens the official GitHub Pages documentation website.
+    - `Resource Center`: opens documentation tutorials and template guides.
+    - `Product Documentation`: links directly to API references and architecture specifications.
+    - `File4Base Community`: navigates to GitHub Discussions for community collaboration.
+    - `Service & Support...`: presents new modal `IssuesGuideDialog` educating users on best practices (searching existing tickets, title conventions, step-by-step reproduction, version/environment logs, and credential privacy) before opening GitHub Issues.
+    - `Check for Updates...`: opens `CheckUpdatesDialog` displaying current version (`v0.4.19`) with release links.
+    - `About File4Base`: opens detailed system information and credits modal.
+
+### Fixed
+- **macOS Desktop Connectivity & App Transport Security (ATS)**:
+  - Added `NSAppTransportSecurity` to `client/macos/Runner/Info.plist` with `NSAllowsArbitraryLoads` and `NSAllowsLocalNetworking` enabled, preventing macOS network security from blocking cleartext HTTP requests to `http://localhost:8080`.
+  - Added `com.apple.security.network.server` and `com.apple.security.files.user-selected.read-write` to `Release.entitlements` and `DebugProfile.entitlements` for smooth local networking and file operations.
+  - Fixed false-positive Docker errors in macOS GUI launches: `EnvironmentChecker` now scans standard installation paths (`/usr/local/bin/docker`, `/opt/homebrew/bin/docker`, etc.) since macOS GUI apps do not inherit shell `$PATH`.
+  - Added fast-path health check to `EnvironmentChecker`: if the File4Base API server is already running and healthy, preflight checks pass immediately without requiring host Docker CLI invocations.
+
+### Changed
+- **Docker Infrastructure Naming Convention Enforcement**:
+  - Enforced mandatory `file4base-` prefix across all containers, images, volumes, and networks.
+  - Renamed backend container and image to `file4base-api` in `docker-compose.yml`, `docs/specs/ARCHITECTURE.md`, and `AGENTS.md`.
+
 ## [0.4.18] - 2026-09-30
 
 ### Fixed

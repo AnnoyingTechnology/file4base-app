@@ -110,3 +110,22 @@ file4base/
     │   │   └── script_workspace/     # Visual action block editor
     └── pubspec.yaml
 ```
+
+## 5. Docker Infrastructure & Naming Standards
+
+To guarantee predictable container orchestration, monitoring, and avoid namespace collisions across development, staging, and production hosts, **all Docker resources MUST strictly use the `file4base-` prefix**:
+
+| Resource Type | Service / Target | Name / Identifier | Host Port | Purpose |
+|---|---|---|---|---|
+| **Container & Image** | Go API Server | `file4base-api` | `8080:8080` | Core Go REST & WebSocket engine |
+| **Container & Image** | WebDirect Client | `file4base-web` | `3000:80` | Nginx reverse proxy & Flutter Web |
+| **Container & Image** | PostgreSQL DB | `file4base-postgres` | `5432:5432` | Primary relational database engine |
+| **Container & Image** | MariaDB DB | `file4base-mariadb` | `3306:3306` | Alternative dialect database engine |
+| **Bridge Network** | System Network | `file4base-net` | N/A | Isolated inter-container communications |
+| **Named Volume** | PostgreSQL Storage | `file4base-postgres-data` | N/A | Persistent PostgreSQL data catalog |
+| **Named Volume** | MariaDB Storage | `file4base-mariadb-data` | N/A | Persistent MariaDB data catalog |
+
+### Strict Enforcement Rules
+1. **Explicit Container Names**: Never omit `container_name:` in `docker-compose.yml`. Relying on Docker Compose default naming generates irregular names like `<dir>-api-1` or `api`. The API container must always be explicitly named `file4base-api`.
+2. **Network Aliases**: The `file4base-api` container must declare network aliases `api`, `server`, and `file4base-api` within `file4base-net` so internal reverse proxies and services can resolve it deterministically.
+

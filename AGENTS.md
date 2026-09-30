@@ -22,4 +22,5 @@
 - **Backend**: Go (Clean Architecture, standard library / chi, pgx/v5, Dockerized).
 - **Frontend**: Flutter desktop (desktop target: macOS/Linux/Windows, WebDirect via Nginx, Riverpod, JSON layout renderer).
 - **Database**: PostgreSQL 16 default, optional MariaDB profile (docker-compose).
+- **Docker Naming Convention**: All Docker containers, images, volumes, and networks MUST strictly use the `file4base-` prefix (`file4base-api`, `file4base-web`, `file4base-postgres`, `file4base-mariadb`, `file4base-net`). Never omit `container_name:`.
 - **Style**: Strict error handling, deterministic JSON schemas (`docs/specs/layout_schema.json`), unit tests for all layers.

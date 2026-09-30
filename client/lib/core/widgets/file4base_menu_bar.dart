@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:url_launcher/url_launcher.dart';
+import '../../features/help/check_updates_dialog.dart';
+import '../../features/help/issues_guide_dialog.dart';
 import '../../main.dart';
 
 class File4BaseMenuBar extends StatelessWidget {
@@ -989,42 +992,51 @@ class File4BaseMenuBar extends StatelessWidget {
     );
   }
 
+  Future<void> _launchUrl(String url) async {
+    final uri = Uri.parse(url);
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    }
+  }
+
   // 10. Help Menu
   Widget _buildHelpMenu(BuildContext context) {
     return SubmenuButton(
       menuChildren: [
         MenuItemButton(
-          onPressed: () => _showNotice(context, 'File4Base Help', 'File4Base User & Developer Guide.'),
+          onPressed: () => _launchUrl('https://file4base.github.io/file4base-app/'),
+          leadingIcon: const Icon(Icons.help_center_outlined, size: 18),
           child: const Text('File4Base Help'),
         ),
         MenuItemButton(
-          onPressed: () => _showNotice(context, 'Resource Center', 'Tutorials, sample templates, and community guides.'),
+          onPressed: () => _launchUrl('https://file4base.github.io/file4base-app/#guides'),
+          leadingIcon: const Icon(Icons.menu_book_outlined, size: 18),
           child: const Text('Resource Center'),
         ),
         MenuItemButton(
-          onPressed: () => _showRoadmapDialog(
-            context,
-            'Product Documentation',
-            'Architecture & API',
-            'Documentation available in docs/api/API_REFERENCE.md and docs/specs/file4base_menu_reference_guide.md.',
-          ),
+          onPressed: () => _launchUrl('https://file4base.github.io/file4base-app/#rest-api'),
+          leadingIcon: const Icon(Icons.description_outlined, size: 18),
           child: const Text('Product Documentation'),
         ),
         MenuItemButton(
-          onPressed: () => _showNotice(context, 'File4Base Community', 'https://github.com/file4base/file4base-app/discussions'),
+          onPressed: () => _launchUrl('https://github.com/file4base/file4base-app/discussions'),
+          leadingIcon: const Icon(Icons.forum_outlined, size: 18),
           child: const Text('File4Base Community'),
         ),
         MenuItemButton(
-          onPressed: () => _showNotice(context, 'Service & Support', 'https://github.com/file4base/file4base-app/issues'),
-          child: const Text('Service & Support'),
+          onPressed: () => IssuesGuideDialog.show(context),
+          leadingIcon: const Icon(Icons.support_agent_outlined, size: 18),
+          child: const Text('Service & Support...'),
         ),
         const Divider(height: 1),
         MenuItemButton(
-          onPressed: () => _showNotice(context, 'Check for Updates', 'File4Base is up to date (v0.2.0).'),
+          onPressed: () => CheckUpdatesDialog.show(context, currentVersion: '0.4.19'),
+          leadingIcon: const Icon(Icons.system_update_outlined, size: 18),
           child: const Text('Check for Updates...'),
         ),
         MenuItemButton(
           onPressed: onAbout,
+          leadingIcon: const Icon(Icons.info_outline, size: 18),
           child: const Text('About File4Base'),
         ),
       ],

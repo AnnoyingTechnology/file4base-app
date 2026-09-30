@@ -5,11 +5,16 @@ import '../../core/system/environment_checker.dart';
 
 class PreflightDialog extends StatefulWidget {
   final VoidCallback onProceed;
+  final String? serverUrl;
 
-  const PreflightDialog({super.key, required this.onProceed});
+  const PreflightDialog({super.key, required this.onProceed, this.serverUrl});
 
-  static Future<void> showIfNeeded(BuildContext context, {required VoidCallback onProceed}) async {
-    final dockerReq = await EnvironmentChecker.checkDocker();
+  static Future<void> showIfNeeded(
+    BuildContext context, {
+    required VoidCallback onProceed,
+    String? serverUrl,
+  }) async {
+    final dockerReq = await EnvironmentChecker.checkDocker(serverUrl: serverUrl);
     final archReq = await EnvironmentChecker.checkPlatformArchitecture();
 
     // If requirements are satisfied, we can proceed automatically or show a quick status
@@ -22,7 +27,7 @@ class PreflightDialog extends StatefulWidget {
       await showDialog(
         context: context,
         barrierDismissible: false,
-        builder: (ctx) => PreflightDialog(onProceed: onProceed),
+        builder: (ctx) => PreflightDialog(onProceed: onProceed, serverUrl: serverUrl),
       );
     }
   }
@@ -49,7 +54,7 @@ class _PreflightDialogState extends State<PreflightDialog> {
       _actionMessage = null;
     });
 
-    final docker = await EnvironmentChecker.checkDocker();
+    final docker = await EnvironmentChecker.checkDocker(serverUrl: widget.serverUrl);
     final arch = await EnvironmentChecker.checkPlatformArchitecture();
 
     if (mounted) {

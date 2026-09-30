@@ -159,4 +159,83 @@ void main() {
     await tester.pumpAndSettle();
     expect(signOutCalled, isTrue);
   });
+
+  testWidgets('File4BaseMenuBar Help menu renders all functional items and opens dialogs',
+      (WidgetTester tester) async {
+    tester.view.physicalSize = const Size(1440, 900);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+
+    bool aboutCalled = false;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: File4BaseMenuBar(
+            activeMode: OperationalMode.browse,
+            isAuthenticated: true,
+            onSignIn: () {},
+            onSignOut: () {},
+            onModeChanged: (_) {},
+            onManageDatabase: () {},
+            onOpenRemote: () {},
+            onAbout: () => aboutCalled = true,
+            isToolbarVisible: true,
+            onToggleToolbar: (_) {},
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    // Tap Help menu
+    await tester.tap(find.text('Help'));
+    await tester.pumpAndSettle();
+
+    // Verify all items are present
+    expect(find.text('File4Base Help'), findsOneWidget);
+    expect(find.text('Resource Center'), findsOneWidget);
+    expect(find.text('Product Documentation'), findsOneWidget);
+    expect(find.text('File4Base Community'), findsOneWidget);
+    expect(find.text('Service & Support...'), findsOneWidget);
+    expect(find.text('Check for Updates...'), findsOneWidget);
+    expect(find.text('About File4Base'), findsOneWidget);
+
+    // Tap About File4Base
+    await tester.tap(find.text('About File4Base'));
+    await tester.pumpAndSettle();
+    expect(aboutCalled, isTrue);
+
+    // Reopen Help and tap Service & Support...
+    await tester.tap(find.text('Help'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Service & Support...'));
+    await tester.pumpAndSettle();
+
+    // Verify IssuesGuideDialog opens
+    expect(find.text('Service & Support — GitHub Issues'), findsOneWidget);
+    expect(find.text('Ver Issues Existentes'), findsOneWidget);
+    expect(find.text('Ir a GitHub Issues'), findsOneWidget);
+
+    // Close Issues dialog
+    await tester.tap(find.text('Cancelar'));
+    await tester.pumpAndSettle();
+    expect(find.text('Service & Support — GitHub Issues'), findsNothing);
+
+    // Reopen Help and tap Check for Updates...
+    await tester.tap(find.text('Help'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Check for Updates...'));
+    await tester.pumpAndSettle();
+
+    // Verify CheckUpdatesDialog opens
+    expect(find.text('Check for Updates'), findsOneWidget);
+    expect(find.text('File4Base v0.4.19'), findsOneWidget);
+    expect(find.text('Ver Releases en GitHub'), findsOneWidget);
+
+    // Close Updates dialog
+    await tester.tap(find.text('Aceptar'));
+    await tester.pumpAndSettle();
+    expect(find.text('Check for Updates'), findsNothing);
+  });
 }

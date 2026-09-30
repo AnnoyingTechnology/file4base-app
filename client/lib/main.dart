@@ -141,7 +141,8 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
       baseName: 'Untitled',
     );
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      PreflightDialog.showIfNeeded(context, onProceed: () {
+      final serverUrl = ref.read(serverUrlProvider);
+      PreflightDialog.showIfNeeded(context, serverUrl: serverUrl, onProceed: () {
         _startAuthSequence();
       });
     });

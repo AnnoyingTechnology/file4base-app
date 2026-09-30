@@ -1,4 +1,5 @@
-import 'dart:io' show Platform, Process;
+import 'dart:convert' show jsonDecode, utf8;
+import 'dart:io' show File, HttpClient, Platform, Process;
 import 'package:flutter/foundation.dart' show kIsWeb;
 
 enum RequirementStatus {
@@ -48,7 +49,47 @@ class SystemRequirement {
 class EnvironmentChecker {
   static bool isTestMode = false;
 
-  static Future<SystemRequirement> checkDocker() async {
+  /// Resolves the docker CLI executable location across macOS, Linux, and Windows.
+  static Future<String?> resolveDockerExecutable() async {
+    if (kIsWeb) return null;
+    final whichCmd = Platform.isWindows ? 'where' : 'which';
+    try {
+      final res = await Process.run(whichCmd, ['docker']);
+      if (res.exitCode == 0) {
+        final line = res.stdout.toString().split('\n').first.trim();
+        if (line.isNotEmpty && File(line).existsSync()) return line;
+      }
+    } catch (_) {}
+
+    final candidates = [
+      if (Platform.isMacOS) ...[
+        '/usr/local/bin/docker',
+        '/opt/homebrew/bin/docker',
+        '/usr/bin/docker',
+        '/Applications/Docker.app/Contents/Resources/bin/docker',
+      ],
+      if (Platform.isLinux) ...[
+        '/usr/bin/docker',
+        '/usr/local/bin/docker',
+        '/snap/bin/docker',
+      ],
+      if (Platform.isWindows) ...[
+        r'C:\Program Files\Docker\Docker\resources\bin\docker.exe',
+        r'C:\Program Files\Docker\Docker\DockerCli.exe',
+      ],
+    ];
+
+    for (final path in candidates) {
+      try {
+        if (File(path).existsSync()) {
+          return path;
+        }
+      } catch (_) {}
+    }
+    return null;
+  }
+
+  static Future<SystemRequirement> checkDocker({String? serverUrl}) async {
     if (isTestMode || kIsWeb) {
       return const SystemRequirement(
         title: 'Docker Engine & CLI',
@@ -58,22 +99,49 @@ class EnvironmentChecker {
       );
     }
 
+    // 1. Fast-path: Check if backend server is already reachable and healthy!
+    // If the server and database are already up and running (e.g. in Docker Compose or remote),
+    // there is no need to block the user or require host-level Docker CLI access.
+    final targetUrl = serverUrl ?? 'http://localhost:8080';
     try {
-      final whichCmd = Platform.isWindows ? 'where' : 'which';
-      final whichResult = await Process.run(whichCmd, ['docker']);
-
-      if (whichResult.exitCode != 0) {
+      final uri = Uri.parse('$targetUrl/healthz');
+      final client = HttpClient()..connectionTimeout = const Duration(seconds: 2);
+      final request = await client.getUrl(uri);
+      final response = await request.close();
+      if (response.statusCode == 200) {
+        final body = await response.transform(utf8.decoder).join();
+        client.close();
+        final Map<String, dynamic> data = jsonDecode(body);
+        final engine = data['engine']?.toString() ?? 'database';
+        final dbStatus = data['database']?.toString() ?? 'connected';
         return SystemRequirement(
-          title: 'Docker Engine & CLI',
-          description: 'Docker is required to run the local PostgreSQL/MariaDB databases and services.',
-          status: RequirementStatus.missing,
-          detail: 'Docker executable not found on your system.',
-          actionLabel: 'Download Docker Desktop',
-          downloadUrl: _getDockerDownloadUrl(),
+          title: 'File4Base Server & Database',
+          description: 'Backend services and database engine ($engine) are active.',
+          status: RequirementStatus.satisfied,
+          detail: 'Healthy connection ($dbStatus) at $targetUrl',
         );
       }
+      client.close();
+    } catch (_) {
+      // Backend not yet reachable via HTTP; proceed to check Docker engine & CLI
+    }
 
-      final pingResult = await Process.run('docker', ['info']);
+    // 2. Resolve Docker executable path
+    final dockerExe = await resolveDockerExecutable();
+    if (dockerExe == null) {
+      return SystemRequirement(
+        title: 'Docker Engine & CLI',
+        description: 'Docker is required to run the local PostgreSQL/MariaDB databases and services.',
+        status: RequirementStatus.missing,
+        detail: 'Docker executable not found in PATH or standard install locations.',
+        actionLabel: 'Download Docker Desktop',
+        downloadUrl: _getDockerDownloadUrl(),
+      );
+    }
+
+    // 3. Verify Docker daemon is running
+    try {
+      final pingResult = await Process.run(dockerExe, ['info']);
       if (pingResult.exitCode != 0) {
         return SystemRequirement(
           title: 'Docker Engine & CLI',
@@ -85,14 +153,14 @@ class EnvironmentChecker {
         );
       }
 
-      final versionResult = await Process.run('docker', ['--version']);
+      final versionResult = await Process.run(dockerExe, ['--version']);
       final versionText = versionResult.stdout.toString().trim();
 
       return SystemRequirement(
         title: 'Docker Engine & CLI',
         description: 'Docker is installed and running.',
         status: RequirementStatus.satisfied,
-        detail: versionText.isNotEmpty ? versionText : 'Docker active',
+        detail: versionText.isNotEmpty ? versionText : 'Docker active ($dockerExe)',
       );
     } catch (e) {
       return SystemRequirement(
@@ -184,12 +252,14 @@ class EnvironmentChecker {
     return false;
   }
 
-  static Future<bool> startProjectContainers(String projectDir) async {
+  static Future<bool> startProjectContainers({String? projectDir}) async {
     if (kIsWeb) return false;
     try {
+      final dockerExe = await resolveDockerExecutable();
+      if (dockerExe == null) return false;
       final result = await Process.run(
-        'docker',
-        ['compose', 'up', '-d', 'postgres'],
+        dockerExe,
+        ['compose', 'up', '-d', 'postgres', 'api'],
         workingDirectory: projectDir,
       );
       return result.exitCode == 0;
