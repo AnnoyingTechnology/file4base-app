@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:file4base_client/core/api/api_client.dart';
-import 'package:file4base_client/core/widgets/file4base_status_sidebar.dart' show LayoutTool;
 import 'package:file4base_client/features/layout_engine/layout_designer_widget.dart';
 import 'package:file4base_client/features/layout_engine/models/layout_definition.dart';
 
@@ -59,7 +58,6 @@ void main() {
 
     final mockApiClient = ApiClient(baseUrl: 'http://localhost:8080');
     bool exitLayoutCalled = false;
-    LayoutDefinitionModel? changedLayout;
 
     await tester.pumpWidget(
       MaterialApp(
@@ -78,9 +76,6 @@ void main() {
               ),
             ],
             onSaved: () {},
-            onLayoutChanged: (updated) {
-              changedLayout = updated;
-            },
             onExitLayout: () {
               exitLayoutCalled = true;
             },

@@ -239,14 +239,7 @@ class SolutionPackage {
       scripts: scriptMap,
       fileOptions: fileOptions,
       pageSetup: pageSetup,
-      users: users.isNotEmpty
-          ? users
-          : [
-              {
-                'username': 'admin',
-                'role': 'owner',
-              }
-            ],
+      users: users,
     );
   }
 }

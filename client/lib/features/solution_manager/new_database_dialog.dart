@@ -7,6 +7,7 @@ class NewDatabaseDialogResult {
   final String fileName;
   final String databaseName;
   final String databasePassword;
+  final String user;
   final SolutionPackage package;
   final StorageDirectoryRef? directoryRef;
 
@@ -14,6 +15,7 @@ class NewDatabaseDialogResult {
     required this.fileName,
     required this.databaseName,
     required this.databasePassword,
+    required this.user,
     required this.package,
     this.directoryRef,
   });
@@ -120,6 +122,12 @@ class _NewDatabaseDialogState extends State<NewDatabaseDialog> {
         tables: const [],
         tableOccurrences: const [],
         layouts: const [],
+        users: [
+          {
+            'username': user,
+            'role': 'owner',
+          }
+        ],
       );
 
       final f4pBytes = pkg.toMsgPack();
@@ -146,6 +154,7 @@ class _NewDatabaseDialogState extends State<NewDatabaseDialog> {
           fileName: '$baseName.f4p',
           databaseName: dbName,
           databasePassword: password,
+          user: user,
           package: pkg,
           directoryRef: _selectedDirectory,
         ));

@@ -1,6 +1,5 @@
 import 'dart:convert';
 import 'package:file4base_client/core/api/api_client.dart';
-import 'package:file4base_client/core/models/script_models.dart';
 import 'package:file4base_client/features/script_workspace/calculation_builder_dialog.dart';
 import 'package:file4base_client/features/script_workspace/script_workspace_dialog.dart';
 import 'package:flutter/material.dart';

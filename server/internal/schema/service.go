@@ -209,10 +209,12 @@ func (s *Service) EnsureSystemTablesWithCredentials(ctx context.Context, initial
 		}
 		provisionUser(initialOwnerUser, pass, "owner")
 	} else {
-		// Provision standard administrative owner accounts
-		provisionUser("admin", "admin", "owner")
-		provisionUser("file4base", "dev_password", "owner")
-		provisionUser("file4base_dev", "file4base_dev", "owner")
+		// Only provision default dev users if sys_users is completely empty and no owner was requested
+		var totalUsers int
+		_ = db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sys_users`).Scan(&totalUsers)
+		if totalUsers == 0 {
+			provisionUser("admin", "admin", "owner")
+		}
 	}
 
 	return nil

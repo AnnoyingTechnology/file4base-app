@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.21] - 2026-09-30
+
+### Fixed
+- **Strict Database and Solution Isolation for Security Users**:
+  - Fixed an issue where creating a new database or switching database context automatically provisioned development default accounts (`admin`, `file4base`, `file4base_dev`) into `sys_users`.
+  - In `server/internal/schema/service.go`:
+    - Removed automatic provisioning of development credentials (`file4base`, `file4base_dev`).
+    - When a new database is created with an explicit initial owner, only that specific owner user is provisioned.
+    - Default fallback to `admin` only occurs if `sys_users` is entirely empty and no owner was requested.
+  - In `client/lib/features/solution_manager/new_database_dialog.dart`:
+    - Added the `user` property to `NewDatabaseDialogResult` and configured the initial `SolutionPackage` to only include the designated owner user for that new database/solution.
+  - In `client/lib/main.dart`:
+    - Fixed `_handleNewDatabase` authentication logic to log in using the selected owner username (`result.user`) instead of accidentally using the database name (`result.databaseName`).
+    - Fixed solution export so that it strictly exports the active database's user roster without injecting foreign accounts.
+  - Verified that switching databases and accessing **Manage Security** only queries and displays the users belonging to the active database.
+
 ## [0.4.20] - 2026-09-30
 
 ### Added

@@ -614,12 +614,14 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
       final activeId = _activeLayout?.id ?? '';
       final perm = _userPermissions[activeId] ?? 'read_write';
       if (perm == 'read_only' || perm == 'none') {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Access Restricted: User "${_currentUser!.username}" has $perm access to this layout. Layout editing is disabled.'),
-            backgroundColor: Colors.orange.shade800,
-          ),
-        );
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Access Restricted: User "${_currentUser!.username}" has $perm access to this layout. Layout editing is disabled.'),
+              backgroundColor: Colors.orange.shade800,
+            ),
+          );
+        }
         return;
       }
     }
@@ -632,7 +634,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
     if (result != null && mounted) {
       try {
         final auth = await client.login(
-          username: result.databaseName,
+          username: result.user,
           password: result.databasePassword,
           database: result.databaseName,
         );
@@ -650,7 +652,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
       } catch (_) {
         if (mounted) {
           setState(() {
-            _currentUser = UserModel(id: 'owner', username: result.databaseName, role: 'owner');
+            _currentUser = UserModel(id: 'owner', username: result.user, role: 'owner');
             _activeSolutionFileName = result.fileName;
             _activeSolutionName = result.package.solutionName;
             _activeDatabaseName = result.databaseName;
@@ -669,7 +671,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
         final locText = result.directoryRef != null ? ' to "${result.directoryRef!.displayName}"' : '';
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Created solution "${result.package.solutionName}" ($locText) with active database "${result.databaseName}". Initial owner: "${result.databaseName}".'),
+            content: Text('Created solution "${result.package.solutionName}" ($locText) with active database "${result.databaseName}". Initial owner: "${result.user}".'),
             backgroundColor: Colors.green.shade700,
           ),
         );

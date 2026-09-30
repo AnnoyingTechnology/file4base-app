@@ -1,9 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:file4base_client/core/api/api_client.dart';
 import 'package:file4base_client/features/schema_manager/manage_database_dialog.dart';
-import 'package:file4base_client/main.dart';
 
 void main() {
   testWidgets('ManageDatabaseDialog Tables tab renders table operations: rename, duplicate, empty, delete, and fields',
