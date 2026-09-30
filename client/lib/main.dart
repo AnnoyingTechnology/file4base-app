@@ -1176,7 +1176,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                   child: Row(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      if (_isToolbarVisible)
+                      if (_isToolbarVisible && mode != OperationalMode.layout)
                         File4BaseStatusSidebar(
                           layouts: _serverLayouts,
                           selectedLayout: _serverLayouts.where((l) => l.id == _activeLayout?.id).firstOrNull ??
@@ -1562,7 +1562,8 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
 
   Widget _buildZoomableBody(BuildContext context, OperationalMode mode, double zoomLevel) {
     final child = _buildBody(context, mode);
-    if ((zoomLevel - 1.0).abs() < 0.001) {
+    // In layout mode, the full designer studio manages its own scroll/canvas space
+    if (mode == OperationalMode.layout || (zoomLevel - 1.0).abs() < 0.001) {
       return child;
     }
 
@@ -1638,12 +1639,56 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
         return LayoutDesignerWidget(
           key: _layoutDesignerKey,
           table: _selectedTable!,
+          tables: _tables,
           apiClient: client,
           initialLayout: _activeLayout ??
               LayoutDefinitionModel.defaultForTable(
                 _selectedTable!.displayName,
                 _selectedTable!.columns.map((c) => c.name).toList(),
               ),
+          layouts: _serverLayouts,
+          onLayoutSelected: (layout) => _selectLayout(layout),
+          onNewLayout: _handleNewLayout,
+          onManageLayouts: _handleManageLayouts,
+          onRenameLayout: _handleRenameActiveLayout,
+          onExitLayout: () => _changeMode(OperationalMode.browse),
+          onManageDatabase: () async {
+            await ManageDatabaseDialog.show(context);
+            _loadTables();
+          },
+          onManageSecurity: () async {
+            if (_currentUser == null) {
+              _startAuthSequence();
+              return;
+            }
+            if (_currentUser!.role == 'user') {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Access Denied: Only Owner or Admin accounts can manage security and user accounts.'),
+                  backgroundColor: Colors.red,
+                ),
+              );
+              return;
+            }
+            final client = ref.read(apiClientProvider);
+            await ManageSecurityDialog.show(
+              context,
+              client,
+              _currentUser!,
+              databaseName: _activeDatabaseName,
+            );
+            await _loadUserPermissions();
+            await _loadTables();
+          },
+          onManageScripts: () async {
+            final client = ref.read(apiClientProvider);
+            await ScriptWorkspaceDialog.show(
+              context,
+              client,
+              databaseName: _activeDatabaseName,
+            );
+          },
+          onManageThemes: () => ManageThemesDialog.show(context),
           onLayoutChanged: (updated) {
             _activeLayout = updated;
           },

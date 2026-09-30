@@ -28,12 +28,12 @@ class LayoutPartModel {
         if (breakField != null) 'break_field': breakField,
       };
 
-  LayoutPartModel copyWith({double? height}) {
+  LayoutPartModel copyWith({String? id, String? type, double? height, String? breakField}) {
     return LayoutPartModel(
-      id: id,
-      type: type,
+      id: id ?? this.id,
+      type: type ?? this.type,
       height: height ?? this.height,
-      breakField: breakField,
+      breakField: breakField ?? this.breakField,
     );
   }
 }
@@ -120,14 +120,19 @@ class LayoutObjectStyle {
 
 class LayoutObjectModel {
   final String id;
-  final String type; // 'field', 'label', 'button', 'portal'
+  final String type; // 'field', 'label', 'button', 'button_bar', 'portal', 'tab_control', 'slide_control', 'popover_button', 'chart', 'web_viewer', 'rect', 'rounded_rect', 'oval', 'line'
   final double x;
   final double y;
   final double width;
   final double height;
   final String text; // label or button text
+  final String? name; // object name / identifier
+  final String? tooltip;
   final FieldBindingModel? fieldBinding;
   final LayoutObjectStyle style;
+  final Map<String, bool>? anchors; // top, bottom, left, right
+  final bool isLocked;
+  final Map<String, dynamic>? portalConfig;
 
   const LayoutObjectModel({
     required this.id,
@@ -137,8 +142,13 @@ class LayoutObjectModel {
     required this.width,
     required this.height,
     this.text = '',
+    this.name,
+    this.tooltip,
     this.fieldBinding,
     this.style = const LayoutObjectStyle(),
+    this.anchors,
+    this.isLocked = false,
+    this.portalConfig,
   });
 
   factory LayoutObjectModel.fromJson(Map<String, dynamic> json) {
@@ -150,12 +160,19 @@ class LayoutObjectModel {
       width: (json['width'] as num?)?.toDouble() ?? 120.0,
       height: (json['height'] as num?)?.toDouble() ?? 32.0,
       text: json['text'] as String? ?? '',
+      name: json['name'] as String?,
+      tooltip: json['tooltip'] as String?,
       fieldBinding: json['field_binding'] != null
           ? FieldBindingModel.fromJson(json['field_binding'] as Map<String, dynamic>)
           : null,
       style: json['style'] != null
           ? LayoutObjectStyle.fromJson(json['style'] as Map<String, dynamic>)
           : const LayoutObjectStyle(),
+      anchors: (json['anchors'] as Map<String, dynamic>?)?.map(
+        (k, v) => MapEntry(k, v as bool),
+      ),
+      isLocked: json['is_locked'] as bool? ?? false,
+      portalConfig: json['portal_config'] as Map<String, dynamic>?,
     );
   }
 
@@ -167,29 +184,46 @@ class LayoutObjectModel {
         'width': width,
         'height': height,
         'text': text,
+        if (name != null) 'name': name,
+        if (tooltip != null) 'tooltip': tooltip,
         if (fieldBinding != null) 'field_binding': fieldBinding!.toJson(),
         'style': style.toJson(),
+        if (anchors != null) 'anchors': anchors,
+        if (isLocked) 'is_locked': true,
+        if (portalConfig != null) 'portal_config': portalConfig,
       };
 
   LayoutObjectModel copyWith({
+    String? id,
+    String? type,
     double? x,
     double? y,
     double? width,
     double? height,
     String? text,
+    String? name,
+    String? tooltip,
     FieldBindingModel? fieldBinding,
     LayoutObjectStyle? style,
+    Map<String, bool>? anchors,
+    bool? isLocked,
+    Map<String, dynamic>? portalConfig,
   }) {
     return LayoutObjectModel(
-      id: id,
-      type: type,
+      id: id ?? this.id,
+      type: type ?? this.type,
       x: x ?? this.x,
       y: y ?? this.y,
       width: width ?? this.width,
       height: height ?? this.height,
       text: text ?? this.text,
+      name: name ?? this.name,
+      tooltip: tooltip ?? this.tooltip,
       fieldBinding: fieldBinding ?? this.fieldBinding,
       style: style ?? this.style,
+      anchors: anchors ?? this.anchors,
+      isLocked: isLocked ?? this.isLocked,
+      portalConfig: portalConfig ?? this.portalConfig,
     );
   }
 }

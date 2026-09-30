@@ -9,6 +9,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.17] - 2026-09-30
+
+### Added
+- **FileMaker Pro Layout Mode Studio Redesign (`OperationalMode.layout`)**:
+  - **Eliminated Duplicate & Unwired UI**: Removed narrow 120px browse sidebar during Layout Mode to prevent duplicate tools and reclaim full-screen canvas width.
+  - **Top Bar 1 (Layout Tools Palette Ribbon)**:
+    - **`[ + ] New Layout / Report`**: Dedicated shortcut to trigger the layout creation workflow.
+    - **Centered Ribbon with 16 Interactive Tools**: Selection Arrow (`Pointer`), Text Tool (`T`), Line Tool (`\`), Rectangle (`▢`), Rounded Rectangle (`▢`), Oval (`○`), Field/Control Tool, Button Tool, Popover Button Tool, Button Bar Tool, Tab Control Tool, Portal Tool, Chart Tool, Web Viewer Tool, Part Tool, and Format Painter Tool.
+    - **Manage Dropdown Menu**: Direct access to Database, Layouts, Security, Script Workspace, and Themes.
+    - **Show/Hide Panes Toggles**: Quick controls to toggle the Left Fields/Objects Pane and the Right Inspector Pane.
+  - **Top Bar 2 (Layout Context Bar)**:
+    - **Layout Selector & Quick Rename**: Dropdown listing all server layouts with pencil shortcut to rename inline.
+    - **Table Occurrence Indicator**: Pill badge showing underlying table occurrence context.
+    - **Theme Selector**: Dropdown to switch themes (`Enlightened`, `Enlightened Touch`, `Enlightened Print`, `Minimalist`).
+    - **Snap 8px Grid & Quick Controls**: Snap-to-grid toggle, Undo / Redo history stack, auto-save status indicator dot.
+    - **Prominent `[ Exit Layout ]` Button**: Green-accented button that flushes pending changes, commits layout to API, and seamlessly returns to Browse Mode.
+  - **Left Pane (Fields & Objects Panel)**:
+    - **Fields Tab**: Table occurrence picker, real-time search filter, A-Z sort toggle, field rows with data type badges (`TT`, `#`, `📅`, `⏱`, `⏱📅`, `🖼`, `fx`, `∑`).
+    - **Direct Drag & Drop**: Dragging fields drops them directly onto the canvas at precise cursor coordinates.
+    - **`[ + New Field ]` Creator**: In-place modal dialog to add new database columns via REST API without leaving Layout Mode.
+    - **Collapsible Drag Preferences**: Customization for Field Placement (Horizontal vs Vertical), Include Label toggle, and Control Style (Edit Box, Dropdown, Popup Menu, Checkbox Set, Radio Set, Calendar).
+    - **Objects Tab**: Hierarchical tree of canvas objects grouped by part (`HEADER`, `BODY`, `FOOTER`) with selection, z-order, and delete actions.
+  - **Interactive Canvas with Dynamic Part Divider Resizing**:
+    - **Left Gutter Part Tabs**: Vertical tabs for `Header`, `Body`, and `Footer` with double-click "Part Setup" dialog for exact point height entry.
+    - **Draggable Part Divider Lines**: Horizontal divider lines with handle tabs between Header, Body, and Footer allowing interactive dragging with live point height tooltip badges (`Header: 80 pt`, `Body: 520 pt`, `Footer: 50 pt`).
+    - **8-Handle Interactive Object Resizing**: Top-left, top-center, top-right, middle-right, bottom-right, bottom-center, bottom-left, middle-left resize handles with live bounds update and 8pt grid snapping.
+  - **Right Inspector (4 Tabs)**:
+    - **Position & Geometry**: Coordinates (Left, Top, Right, Bottom), Dimensions (Width, Height), FileMaker 4-pin autosizing anchor box, Arrange & Align tools (Left, Center, Right, Top, Middle, Bottom, Bring Front, Send Back).
+    - **Appearance & Styles**: Fill color palette swatches and custom hex code input, border color, border width, and corner radius slider.
+    - **Data Binding**: Table occurrence, bound column picker, control style, and Browse/Find entry permission checkboxes.
+    - **Typography & Text**: Display text editor, font family, font size, bold toggle, text color, and alignment options (Left, Center, Right, Justify).
+  - **Automated Tests**:
+    - Added `client/test/layout_designer_filemaker_studio_test.dart` asserting all tools, left pane tabs, canvas parts, object selection, and inspector tab switching (54 client tests passing).
+
 ## [0.4.16] - 2026-09-25
 
 ### Added
