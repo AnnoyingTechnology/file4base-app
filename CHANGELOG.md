@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.22] - 2026-09-30
+
+### Added
+- **Manage Database Global "Databases" Tab & Lifecycle Management**:
+  - Added a new primary **Databases** tab in `ManageDatabaseDialog` displaying all physical databases registered on the PostgreSQL / MariaDB server.
+  - Implemented multi-database selection with checkboxes, master header checkbox ("Select All" with tristate support), and real-time selected database count badge with quick-clear button.
+  - Added individual database actions:
+    - **Active (Connected) badge**: clearly distinguishes the currently connected database context.
+    - **Switch**: quickly switch active database context directly from the table.
+    - **Drop Database**: single database deletion with safety checks.
+  - Added batch database operations:
+    - **Drop (N) Selected...**: permanently drop multiple selected databases in a single operation, protected by a consolidated safety confirmation dialog.
+    - Protected system and development databases (`postgres`, `file4base_dev`) and active database from accidental deletion.
+  - Added **New Database...** quick action button to create databases on the server directly from the dialog with initial owner credentials.
+  - Added backend database deletion:
+    - Implemented `MultiDatabaseManager.DropDatabase(ctx, dbName)` with session termination (`pg_terminate_backend`) and connection pool cleanup.
+    - Registered `DELETE /api/v1/databases/{name}` REST API endpoint in `SolutionHandler`.
+    - Added `deleteDatabase` method to Flutter `ApiClient`.
+
 ## [0.4.21] - 2026-09-30
 
 ### Fixed

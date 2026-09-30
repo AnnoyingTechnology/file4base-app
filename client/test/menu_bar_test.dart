@@ -230,7 +230,7 @@ void main() {
 
     // Verify CheckUpdatesDialog opens
     expect(find.text('Check for Updates'), findsOneWidget);
-    expect(find.text('File4Base v0.4.21'), findsOneWidget);
+    expect(find.text('File4Base v0.4.22'), findsOneWidget);
     expect(find.text('Ver Releases en GitHub'), findsOneWidget);
 
     // Close Updates dialog

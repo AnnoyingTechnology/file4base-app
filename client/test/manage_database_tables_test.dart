@@ -22,9 +22,14 @@ void main() {
     await tester.pumpAndSettle();
 
     // Verify Tab headers
+    expect(find.text('Databases'), findsOneWidget);
     expect(find.text('Tables'), findsOneWidget);
     expect(find.text('Fields'), findsOneWidget);
     expect(find.text('Relationships Graph'), findsOneWidget);
+
+    // Switch to Tables tab
+    await tester.tap(find.text('Tables'));
+    await tester.pumpAndSettle();
 
     // Verify Select All Checkbox
     expect(find.text('Select All'), findsOneWidget);

@@ -951,6 +951,15 @@ class ApiClient {
     return jsonDecode(response.body) as Map<String, dynamic>;
   }
 
+  Future<Map<String, dynamic>> deleteDatabase(String name) async {
+    final response = await _httpClient.delete(
+      Uri.parse('$baseUrl/api/v1/databases/${Uri.encodeComponent(name)}'),
+      headers: _headers(),
+    );
+    _checkResponse(response);
+    return jsonDecode(response.body) as Map<String, dynamic>;
+  }
+
   Future<Uint8List> exportSolution({String? name, String? host, int? port, String? user, String? password}) async {
     final queryParams = <String, String>{};
     if (name != null) queryParams['name'] = name;

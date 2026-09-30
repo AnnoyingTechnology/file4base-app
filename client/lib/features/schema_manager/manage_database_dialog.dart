@@ -24,6 +24,11 @@ class ManageDatabaseDialog extends ConsumerStatefulWidget {
 class _ManageDatabaseDialogState extends ConsumerState<ManageDatabaseDialog>
     with SingleTickerProviderStateMixin {
   late TabController _tabController;
+  List<String> _databases = [];
+  String _activeDatabase = '';
+  final Set<String> _selectedDatabaseNames = {};
+  String _databaseSearchFilter = '';
+
   List<TableModel> _tables = [];
   List<TableOccurrenceModel> _occurrences = [];
   List<RelationshipModel> _relationships = [];
@@ -36,14 +41,207 @@ class _ManageDatabaseDialogState extends ConsumerState<ManageDatabaseDialog>
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 3, vsync: this);
-    _loadTables();
+    _tabController = TabController(length: 4, vsync: this);
+    _loadAll();
   }
 
   @override
   void dispose() {
     _tabController.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadAll() async {
+    await _loadDatabases();
+    await _loadTables();
+  }
+
+  Future<void> _loadDatabases() async {
+    final client = ref.read(apiClientProvider);
+    try {
+      final res = await client.listDatabases();
+      final list = (res['databases'] as List<dynamic>?)?.map((e) => e.toString()).toList() ?? [];
+      final active = res['active']?.toString() ?? '';
+      if (mounted) {
+        setState(() {
+          _databases = list;
+          _activeDatabase = active;
+          _selectedDatabaseNames.removeWhere((name) => !list.contains(name));
+        });
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _handleSwitchDatabase(String dbName) async {
+    final client = ref.read(apiClientProvider);
+    try {
+      await client.switchDatabase(dbName);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Switched to database "$dbName"')),
+        );
+      }
+      await _loadDatabases();
+      await _loadTables();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to switch database: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
+
+  Future<void> _handleDeleteDatabases(List<String> targets) async {
+    if (targets.isEmpty) return;
+
+    // Filter out active or protected databases
+    final toDelete = targets.where((db) => db != _activeDatabase && db != 'postgres' && db != 'file4base_dev').toList();
+    if (toDelete.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Cannot delete active or protected databases ("file4base_dev", "postgres").'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Row(
+          children: [
+            Icon(Icons.warning_amber_rounded, color: Colors.red.shade700, size: 28),
+            const SizedBox(width: 10),
+            Text('Drop ${toDelete.length} Database${toDelete.length > 1 ? "s" : ""}'),
+          ],
+        ),
+        content: Text(
+          'DANGER: This will permanently DROP ${toDelete.length} database(s) and ALL tables, records, schemas, and users within them:\n\n'
+          '${toDelete.map((d) => '• $d').join('\n')}\n\n'
+          'This action CANNOT be undone. Are you sure you want to proceed?',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.red.shade700),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text('DROP (${toDelete.length}) Database${toDelete.length > 1 ? "s" : ""}'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    final client = ref.read(apiClientProvider);
+    int successCount = 0;
+    final List<String> errors = [];
+
+    for (final dbName in toDelete) {
+      try {
+        await client.deleteDatabase(dbName);
+        _selectedDatabaseNames.remove(dbName);
+        successCount++;
+      } catch (e) {
+        errors.add('$dbName: $e');
+      }
+    }
+
+    await _loadDatabases();
+    if (mounted) {
+      if (errors.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Successfully deleted $successCount database(s).')),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Deleted $successCount database(s). Errors: ${errors.join(", ")}'),
+            backgroundColor: Colors.red.shade700,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _showNewDatabaseDialog() async {
+    final client = ref.read(apiClientProvider);
+    final dbNameController = TextEditingController();
+    final userController = TextEditingController(text: 'admin');
+    final passwordController = TextEditingController(text: 'admin');
+
+    await showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.add_circle_outline, color: Color(0xFF1E88E5)),
+            SizedBox(width: 8),
+            Text('Create Database on Server'),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: dbNameController,
+              decoration: const InputDecoration(
+                labelText: 'Database Name (e.g. inventory_db)',
+                border: OutlineInputBorder(),
+              ),
+              autofocus: true,
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: userController,
+              decoration: const InputDecoration(
+                labelText: 'Initial Owner User',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: passwordController,
+              obscureText: true,
+              decoration: const InputDecoration(
+                labelText: 'Owner Password',
+                border: OutlineInputBorder(),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+          FilledButton(
+            onPressed: () async {
+              final name = dbNameController.text.trim().toLowerCase();
+              final user = userController.text.trim();
+              final pass = passwordController.text.trim();
+              if (name.isEmpty) return;
+              Navigator.pop(ctx);
+              try {
+                await client.createDatabase(name, user: user.isNotEmpty ? user : 'admin', password: pass.isNotEmpty ? pass : 'admin');
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Database "$name" created successfully.')),
+                  );
+                }
+                await _loadDatabases();
+              } catch (e) {
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Error creating database: $e'), backgroundColor: Colors.red),
+                  );
+                }
+              }
+            },
+            child: const Text('Create'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _loadTables() async {
@@ -697,6 +895,7 @@ class _ManageDatabaseDialogState extends ConsumerState<ManageDatabaseDialog>
             TabBar(
               controller: _tabController,
               tabs: const [
+                Tab(icon: Icon(Icons.dataset_outlined), text: 'Databases'),
                 Tab(icon: Icon(Icons.table_chart), text: 'Tables'),
                 Tab(icon: Icon(Icons.view_column), text: 'Fields'),
                 Tab(icon: Icon(Icons.hub), text: 'Relationships Graph'),
@@ -714,7 +913,7 @@ class _ManageDatabaseDialogState extends ConsumerState<ManageDatabaseDialog>
                       child: Text('Error loading schema: $_errorMessage',
                           style: const TextStyle(fontSize: 12, color: Colors.red)),
                     ),
-                    TextButton(onPressed: _loadTables, child: const Text('Retry')),
+                    TextButton(onPressed: _loadAll, child: const Text('Retry')),
                   ],
                 ),
               ),
@@ -724,6 +923,7 @@ class _ManageDatabaseDialogState extends ConsumerState<ManageDatabaseDialog>
                   : TabBarView(
                       controller: _tabController,
                       children: [
+                        _buildDatabasesTab(),
                         _buildTablesTab(),
                         _buildFieldsTab(),
                         _buildRelationshipsGraphTab(),
@@ -1326,6 +1526,313 @@ class _ManageDatabaseDialogState extends ConsumerState<ManageDatabaseDialog>
                 ),
               );
             },
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildDatabasesTab() {
+    final filtered = _databases.where((d) {
+      if (_databaseSearchFilter.isEmpty) return true;
+      return d.toLowerCase().contains(_databaseSearchFilter.toLowerCase());
+    }).toList();
+
+    final allFilteredSelected = filtered.isNotEmpty && filtered.every((d) => _selectedDatabaseNames.contains(d));
+    final someFilteredSelected = filtered.any((d) => _selectedDatabaseNames.contains(d));
+
+    return Column(
+      children: [
+        // Toolbar
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+            border: Border(bottom: BorderSide(color: Theme.of(context).dividerColor)),
+          ),
+          child: Row(
+            children: [
+              SizedBox(
+                width: 250,
+                height: 36,
+                child: TextField(
+                  decoration: InputDecoration(
+                    hintText: 'Filter databases...',
+                    prefixIcon: const Icon(Icons.search, size: 18),
+                    suffixIcon: _databaseSearchFilter.isNotEmpty
+                        ? IconButton(
+                            icon: const Icon(Icons.clear, size: 16),
+                            onPressed: () => setState(() => _databaseSearchFilter = ''),
+                          )
+                        : null,
+                    isDense: true,
+                    contentPadding: const EdgeInsets.symmetric(vertical: 8),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(6)),
+                  ),
+                  onChanged: (val) => setState(() => _databaseSearchFilter = val),
+                ),
+              ),
+              const SizedBox(width: 12),
+              if (_selectedDatabaseNames.isNotEmpty) ...[
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.primaryContainer,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        '${_selectedDatabaseNames.length} selected',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                          color: Theme.of(context).colorScheme.onPrimaryContainer,
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                      InkWell(
+                        onTap: () => setState(() => _selectedDatabaseNames.clear()),
+                        child: Icon(Icons.close, size: 14, color: Theme.of(context).colorScheme.onPrimaryContainer),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 12),
+              ],
+              const Spacer(),
+              FilledButton.icon(
+                icon: const Icon(Icons.add, size: 18),
+                label: const Text('New Database...'),
+                onPressed: _showNewDatabaseDialog,
+              ),
+              const SizedBox(width: 8),
+              IconButton(
+                icon: const Icon(Icons.refresh),
+                tooltip: 'Refresh databases',
+                onPressed: _loadDatabases,
+              ),
+            ],
+          ),
+        ),
+
+        // Databases list table
+        Expanded(
+          child: filtered.isEmpty
+              ? Center(
+                  child: Text(
+                    _databaseSearchFilter.isEmpty
+                        ? 'No databases found on server'
+                        : 'No databases matching "$_databaseSearchFilter"',
+                    style: const TextStyle(color: Colors.grey),
+                  ),
+                )
+              : ListView.builder(
+                  itemCount: filtered.length + 1, // +1 for header
+                  itemBuilder: (ctx, index) {
+                    if (index == 0) {
+                      // Header Row
+                      return Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                          border: Border(bottom: BorderSide(color: Theme.of(context).dividerColor)),
+                        ),
+                        child: Row(
+                          children: [
+                            SizedBox(
+                              width: 32,
+                              height: 32,
+                              child: Checkbox(
+                                tristate: true,
+                                value: allFilteredSelected
+                                    ? true
+                                    : (someFilteredSelected ? null : false),
+                                onChanged: (val) {
+                                  setState(() {
+                                    if (val == true || (val == null && !allFilteredSelected)) {
+                                      _selectedDatabaseNames.addAll(filtered);
+                                    } else {
+                                      _selectedDatabaseNames.removeAll(filtered);
+                                    }
+                                  });
+                                },
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            const Expanded(
+                              flex: 3,
+                              child: Text('Database Name', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                            ),
+                            const Expanded(
+                              flex: 2,
+                              child: Text('Status / State', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                            ),
+                            const SizedBox(
+                              width: 180,
+                              child: Text('Action', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                            ),
+                          ],
+                        ),
+                      );
+                    }
+
+                    final dbName = filtered[index - 1];
+                    final isChecked = _selectedDatabaseNames.contains(dbName);
+                    final isActive = (dbName == _activeDatabase);
+                    final isProtected = (dbName == 'postgres' || dbName == 'file4base_dev');
+
+                    return InkWell(
+                      onTap: () {
+                        setState(() {
+                          if (isChecked) {
+                            _selectedDatabaseNames.remove(dbName);
+                          } else {
+                            _selectedDatabaseNames.add(dbName);
+                          }
+                        });
+                      },
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: isActive
+                              ? Colors.green.withValues(alpha: 0.08)
+                              : (isChecked ? Theme.of(context).colorScheme.primaryContainer.withValues(alpha: 0.25) : null),
+                          border: Border(bottom: BorderSide(color: Theme.of(context).dividerColor.withValues(alpha: 0.4))),
+                        ),
+                        child: Row(
+                          children: [
+                            SizedBox(
+                              width: 32,
+                              height: 32,
+                              child: Checkbox(
+                                value: isChecked,
+                                onChanged: (val) {
+                                  setState(() {
+                                    if (val == true) {
+                                      _selectedDatabaseNames.add(dbName);
+                                    } else {
+                                      _selectedDatabaseNames.remove(dbName);
+                                    }
+                                  });
+                                },
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              flex: 3,
+                              child: Row(
+                                children: [
+                                  Icon(
+                                    isActive ? Icons.check_circle : Icons.storage_outlined,
+                                    size: 18,
+                                    color: isActive ? Colors.green : (isProtected ? Colors.grey : const Color(0xFF1E88E5)),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Text(
+                                    dbName,
+                                    style: TextStyle(
+                                      fontWeight: isActive ? FontWeight.bold : FontWeight.w500,
+                                      fontSize: 14,
+                                      color: isActive ? Colors.green.shade800 : null,
+                                    ),
+                                  ),
+                                  if (isProtected) ...[
+                                    const SizedBox(width: 8),
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                      decoration: BoxDecoration(
+                                        color: Colors.grey.withValues(alpha: 0.2),
+                                        borderRadius: BorderRadius.circular(4),
+                                      ),
+                                      child: const Text('System', style: TextStyle(fontSize: 10, color: Colors.grey)),
+                                    ),
+                                  ],
+                                ],
+                              ),
+                            ),
+                            Expanded(
+                              flex: 2,
+                              child: Row(
+                                children: [
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                    decoration: BoxDecoration(
+                                      color: isActive ? Colors.green.shade700 : Colors.grey.shade400,
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                    child: Text(
+                                      isActive ? 'Active (Connected)' : 'Disconnected',
+                                      style: const TextStyle(fontSize: 11, color: Colors.white, fontWeight: FontWeight.bold),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            SizedBox(
+                              width: 180,
+                              child: Row(
+                                children: [
+                                  if (!isActive)
+                                    OutlinedButton.icon(
+                                      icon: const Icon(Icons.link, size: 14),
+                                      label: const Text('Switch', style: TextStyle(fontSize: 12)),
+                                      style: OutlinedButton.styleFrom(
+                                        visualDensity: VisualDensity.compact,
+                                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                      ),
+                                      onPressed: () => _handleSwitchDatabase(dbName),
+                                    )
+                                  else
+                                    const Text('Currently Active', style: TextStyle(fontSize: 12, color: Colors.green, fontWeight: FontWeight.bold)),
+                                  if (!isActive && !isProtected) ...[
+                                    const Spacer(),
+                                    IconButton(
+                                      icon: const Icon(Icons.delete_outline, size: 18, color: Colors.red),
+                                      tooltip: 'Drop Database',
+                                      onPressed: () => _handleDeleteDatabases([dbName]),
+                                    ),
+                                  ],
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                ),
+        ),
+
+        // Bottom Actions Bar
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 10.0),
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.surfaceContainerHighest,
+            border: Border(top: BorderSide(color: Theme.of(context).dividerColor)),
+          ),
+          child: Row(
+            children: [
+              Text(
+                'Total: ${_databases.length} databases on server',
+                style: const TextStyle(fontSize: 12, color: Colors.grey),
+              ),
+              const Spacer(),
+              if (_selectedDatabaseNames.isNotEmpty) ...[
+                OutlinedButton.icon(
+                  icon: const Icon(Icons.delete_forever, size: 16, color: Colors.red),
+                  label: Text('Drop (${_selectedDatabaseNames.length}) Selected...', style: const TextStyle(color: Colors.red)),
+                  style: OutlinedButton.styleFrom(side: const BorderSide(color: Colors.red)),
+                  onPressed: () => _handleDeleteDatabases(_selectedDatabaseNames.toList()),
+                ),
+                const SizedBox(width: 8),
+              ],
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Close'),
+              ),
+            ],
           ),
         ),
       ],

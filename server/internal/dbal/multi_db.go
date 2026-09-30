@@ -277,6 +277,60 @@ func (m *MultiDatabaseManager) CreateDatabase(ctx context.Context, dbName string
 	return nil
 }
 
+// DropDatabase terminates existing connections and drops a database on the server
+func (m *MultiDatabaseManager) DropDatabase(ctx context.Context, dbName string) error {
+	dbName = strings.ToLower(strings.TrimSpace(dbName))
+	if !validDatabaseName.MatchString(dbName) {
+		return fmt.Errorf("invalid database name '%s'", dbName)
+	}
+
+	// Prevent dropping system or currently active database without switching first
+	m.mu.RLock()
+	active := m.activeDBName
+	m.mu.RUnlock()
+
+	if dbName == "postgres" || dbName == "file4base_dev" {
+		return fmt.Errorf("cannot drop protected system/development database '%s'", dbName)
+	}
+
+	if dbName == active {
+		return fmt.Errorf("cannot drop active connected database '%s'; please switch to another database first", dbName)
+	}
+
+	// Close driver connection to target db if open in pool
+	m.mu.Lock()
+	if d, ok := m.drivers[dbName]; ok {
+		_ = d.Close()
+		delete(m.drivers, dbName)
+	}
+	m.mu.Unlock()
+
+	// Connect through admin/postgres database to execute DROP DATABASE
+	adminDriver, err := m.GetDriver(ctx, "postgres")
+	if err != nil {
+		return fmt.Errorf("unable to connect to admin database to drop: %w", err)
+	}
+	adminDB := adminDriver.DB()
+
+	if m.baseEngine == EnginePostgres {
+		// Terminate any active sessions connected to this database
+		terminateSQL := `SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = $1 AND pid <> pg_backend_pid();`
+		_, _ = adminDB.ExecContext(ctx, terminateSQL, dbName)
+
+		dropSQL := fmt.Sprintf(`DROP DATABASE IF EXISTS "%s";`, dbName)
+		if _, err := adminDB.ExecContext(ctx, dropSQL); err != nil {
+			return fmt.Errorf("failed dropping database %s: %w", dbName, err)
+		}
+	} else {
+		dropSQL := fmt.Sprintf("DROP DATABASE IF EXISTS `%s`;", dbName)
+		if _, err := adminDB.ExecContext(ctx, dropSQL); err != nil {
+			return fmt.Errorf("failed dropping database %s: %w", dbName, err)
+		}
+	}
+
+	return nil
+}
+
 // Close closes all open database connection pools
 func (m *MultiDatabaseManager) Close() error {
 	m.mu.Lock()

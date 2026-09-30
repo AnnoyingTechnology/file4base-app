@@ -32,6 +32,7 @@ func (h *SolutionHandler) RegisterRoutes(r chi.Router) {
 		r.Get("/", h.ListDatabases)
 		r.Post("/", h.CreateDatabase)
 		r.Post("/switch", h.SwitchDatabase)
+		r.Delete("/{name}", h.DeleteDatabase)
 	})
 
 	// Solution and data packaging endpoints
@@ -148,6 +149,27 @@ func (h *SolutionHandler) SwitchDatabase(w http.ResponseWriter, r *http.Request)
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
 		"active": h.dbMgr.ActiveDatabase(),
 		"status": "connected",
+	})
+}
+
+// DeleteDatabase drops a physical database on the server
+func (h *SolutionHandler) DeleteDatabase(w http.ResponseWriter, r *http.Request) {
+	name := strings.ToLower(strings.TrimSpace(chi.URLParam(r, "name")))
+	if name == "" {
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Validation Failed", "Database name is required")
+		return
+	}
+
+	if err := h.dbMgr.DropDatabase(r.Context(), name); err != nil {
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Database Deletion Error", err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"database": name,
+		"status":   "deleted",
+		"active":   h.dbMgr.ActiveDatabase(),
 	})
 }
 
