@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - **Desktop Environment Preflight & Database Engine Validation**:
+  - **macOS Docker App & Socket Detection**: Enhanced `EnvironmentChecker` to inspect symlinks, check `/Applications/Docker.app`, and detect `/var/run/docker.sock` and `~/.docker/run/docker.sock` so Docker Desktop is recognized even if CLI binaries are not in minimal GUI launcher `PATH`.
+  - **macOS App Sandbox Disabled for Low-Code Docker Orchestration**: Disabled `com.apple.security.app-sandbox` in `Release.entitlements` and `DebugProfile.entitlements` so that standalone macOS desktop builds distributed via DMG/ZIP can execute Docker CLI commands and communicate with the local Docker daemon socket.
   - **Single Active Database Engine Validation**: Corrected the preflight check so that having either PostgreSQL OR MariaDB active (with the API and Web containers or healthy `/healthz` returning 200) satisfies startup requirements without failing or demanding both engines concurrently.
   - **Automated Docker Desktop & Container Launch**: Added `startDockerAndContainers` in `EnvironmentChecker` and integrated it with `PreflightDialog`. When Docker Desktop is closed or stopped, users can click "Launch Docker Desktop" to automatically launch Docker Desktop, poll for the daemon to become responsive, and start the project containers (`postgres`, `api`, `web`) without requiring manual terminal intervention.
   - **Container State Discovery**: Added `checkProjectContainers` using `docker ps` to verify running container state (`file4base-postgres` or `file4base-mariadb` + `file4base-api` + `file4base-web`) so the desktop application immediately identifies ready local services.

@@ -1,5 +1,5 @@
 import 'dart:convert' show jsonDecode, utf8;
-import 'dart:io' show Directory, File, HttpClient, Platform, Process;
+import 'dart:io' show Directory, File, FileSystemEntity, HttpClient, Link, Platform, Process;
 import 'package:flutter/foundation.dart' show kIsWeb;
 
 enum RequirementStatus {
@@ -57,21 +57,24 @@ class EnvironmentChecker {
       final res = await Process.run(whichCmd, ['docker']);
       if (res.exitCode == 0) {
         final line = res.stdout.toString().split('\n').first.trim();
-        if (line.isNotEmpty && File(line).existsSync()) return line;
+        if (line.isNotEmpty && (File(line).existsSync() || Link(line).existsSync())) return line;
       }
     } catch (_) {}
 
+    final homeDir = Platform.environment['HOME'] ?? '';
     final candidates = [
       if (Platform.isMacOS) ...[
         '/usr/local/bin/docker',
         '/opt/homebrew/bin/docker',
-        '/usr/bin/docker',
         '/Applications/Docker.app/Contents/Resources/bin/docker',
+        if (homeDir.isNotEmpty) '$homeDir/.docker/bin/docker',
+        '/usr/bin/docker',
       ],
       if (Platform.isLinux) ...[
         '/usr/bin/docker',
         '/usr/local/bin/docker',
         '/snap/bin/docker',
+        if (homeDir.isNotEmpty) '$homeDir/.docker/bin/docker',
       ],
       if (Platform.isWindows) ...[
         r'C:\Program Files\Docker\Docker\resources\bin\docker.exe',
@@ -81,12 +84,30 @@ class EnvironmentChecker {
 
     for (final path in candidates) {
       try {
-        if (File(path).existsSync()) {
+        if (File(path).existsSync() || Link(path).existsSync()) {
           return path;
         }
       } catch (_) {}
     }
     return null;
+  }
+
+  /// Checks whether Docker Desktop app or daemon socket exists on the machine.
+  static bool isDockerAppInstalled() {
+    if (kIsWeb) return false;
+    final homeDir = Platform.environment['HOME'] ?? '';
+    if (Platform.isMacOS) {
+      return Directory('/Applications/Docker.app').existsSync() ||
+          File('/var/run/docker.sock').existsSync() ||
+          Link('/var/run/docker.sock').existsSync() ||
+          (homeDir.isNotEmpty && File('$homeDir/.docker/run/docker.sock').existsSync());
+    } else if (Platform.isWindows) {
+      return Directory(r'C:\Program Files\Docker\Docker').existsSync();
+    } else if (Platform.isLinux) {
+      return File('/var/run/docker.sock').existsSync() ||
+          Link('/var/run/docker.sock').existsSync();
+    }
+    return false;
   }
 
   static Future<SystemRequirement> checkDocker({String? serverUrl}) async {
@@ -129,6 +150,16 @@ class EnvironmentChecker {
     // 2. Resolve Docker executable path
     final dockerExe = await resolveDockerExecutable();
     if (dockerExe == null) {
+      if (isDockerAppInstalled()) {
+        return SystemRequirement(
+          title: 'Docker Desktop',
+          description: 'Docker Desktop is installed on this computer.',
+          status: RequirementStatus.daemonNotRunning,
+          detail: 'Docker app found. Click below to launch Docker Desktop and start containers.',
+          actionLabel: 'Launch Docker Desktop',
+          downloadUrl: _getDockerDownloadUrl(),
+        );
+      }
       return SystemRequirement(
         title: 'Docker Engine & CLI',
         description: 'Docker is required to run the local PostgreSQL/MariaDB databases and services.',
