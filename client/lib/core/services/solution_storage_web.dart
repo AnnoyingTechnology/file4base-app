@@ -32,7 +32,27 @@ void triggerPlatformPrint() {
 
 void triggerPlatformQuit() {
   try {
+    // Attempt standard window.close()
     web.window.close();
+  } catch (_) {}
+
+  // If the browser blocked window.close() (standard security for scripts not opened by window.open),
+  // navigate to about:blank or display a clean 'Session Closed' page:
+  try {
+    final doc = web.document;
+    doc.body?.innerHTML = '''
+      <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;background:#0f172a;color:#f8fafc;font-family:-apple-system,BlinkMacSystemFont,sans-serif;margin:0;">
+        <div style="background:#1e293b;padding:32px 48px;border-radius:12px;border:1px solid #334155;text-align:center;box-shadow:0 20px 25px -5px rgba(0,0,0,0.5);">
+          <div style="font-size:48px;margin-bottom:12px;">🔒</div>
+          <h2 style="margin:0 0 8px 0;font-size:22px;color:#38bdf8;">File4Base Closed</h2>
+          <p style="margin:0 0 16px 0;font-size:14px;color:#94a3b8;">All changes were safely saved to database and solution files.</p>
+          <p style="margin:0;font-size:13px;color:#64748b;">You can safely close this browser tab now.</p>
+        </div>
+      </div>
+    '''.toJS;
+    try {
+      web.window.close();
+    } catch (_) {}
   } catch (_) {}
 }
 
