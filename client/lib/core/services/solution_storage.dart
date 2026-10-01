@@ -113,6 +113,11 @@ class SolutionStorageService {
     }
   }
 
+  /// Triggers platform printing. On Web Direct, opens native browser print dialog.
+  static void triggerPrint() {
+    triggerPlatformPrint();
+  }
+
   /// Prompts the user to pick a solution file (.f4p new, .f4b legacy) or data file (.f4data).
   /// On Desktop, uses native OS file picker.
   /// On Web, uses HTML5 file chooser without throwing UnimplementedError.

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../core/api/api_client.dart';
 import '../../core/models/page_setup_model.dart';
+import '../../core/services/solution_storage.dart';
 import 'models/layout_definition.dart';
 
 class LayoutPreviewWidget extends StatefulWidget {
@@ -133,13 +134,7 @@ class _LayoutPreviewWidgetState extends State<LayoutPreviewWidget> {
                   icon: const Icon(Icons.picture_as_pdf, size: 16),
                   label: const Text('Export PDF / Print', style: TextStyle(fontSize: 12)),
                   onPressed: () {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text(
-                          'Print / PDF Export simulated: ${widget.pageSetup.paperSizeName} (${widget.pageSetup.isLandscape ? "Landscape" : "Portrait"}) via ${widget.pageSetup.printer}.',
-                        ),
-                      ),
-                    );
+                    SolutionStorageService.triggerPrint();
                   },
                 ),
               ],

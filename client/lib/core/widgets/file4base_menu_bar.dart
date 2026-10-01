@@ -37,6 +37,9 @@ class File4BaseMenuBar extends StatelessWidget {
   final VoidCallback? onResetZoom;
   final ValueChanged<double>? onSelectZoom;
   final double? zoomLevel;
+  final VoidCallback? onChangePassword;
+  final VoidCallback? onExportRecords;
+  final VoidCallback? onPrint;
   final bool isAuthenticated;
   final VoidCallback? onSignIn;
   final VoidCallback? onSignOut;
@@ -60,7 +63,10 @@ class File4BaseMenuBar extends StatelessWidget {
     this.onSaveCopyAs,
     this.onExportData,
     this.onFileOptions,
+    this.onChangePassword,
     this.onPageSetup,
+    this.onPrint,
+    this.onExportRecords,
     this.onNewRecord,
     this.onDuplicateRecord,
     this.onDeleteRecord,
@@ -286,12 +292,6 @@ class File4BaseMenuBar extends StatelessWidget {
           ),
           const Divider(height: 1),
         ],
-        MenuItemButton(
-          onPressed: () => _showNotice(context, 'Close', 'Workspace window closed.'),
-          shortcut: const SingleActivator(LogicalKeyboardKey.keyW, meta: true),
-          child: const Text('Close'),
-        ),
-        const Divider(height: 1),
         SubmenuButton(
           menuChildren: [
             MenuItemButton(
@@ -338,30 +338,14 @@ class File4BaseMenuBar extends StatelessWidget {
           ],
           child: const Text('Manage'),
         ),
-        SubmenuButton(
-          menuChildren: [
-            MenuItemButton(
-              onPressed: () => _showRoadmapDialog(context, 'Share with Clients', 'Roadmap Phase 6', 'Multi-user real-time synchronization over WebSockets and TCP.'),
-              child: const Text('Share with File4Base Clients...'),
-            ),
-            MenuItemButton(
-              onPressed: () => _showNotice(context, 'WebDirect', 'WebDirect is active on port 3000.'),
-              child: const Text('Enable File4Base WebDirect...'),
-            ),
-            MenuItemButton(
-              onPressed: () => _showRoadmapDialog(context, 'ODBC / JDBC', 'Roadmap Phase 9', 'Direct SQL wire protocol compatibility.'),
-              child: const Text('Share with ODBC/JDBC...'),
-            ),
-          ],
-          child: const Text('Sharing'),
-        ),
-        const Divider(height: 1),
         MenuItemButton(
           onPressed: onFileOptions ?? () => _showNotice(context, 'File Options', 'Startup script, default credentials, and encryption.'),
           child: const Text('File Options...'),
         ),
         MenuItemButton(
-          onPressed: () => _showNotice(context, 'Change Password', 'Update account password.'),
+          onPressed: !isAuthenticated
+              ? () => _showNotice(context, 'Authentication Required', 'Please sign in to change password.')
+              : (onChangePassword ?? () => _showNotice(context, 'Change Password', 'Update account password.')),
           child: const Text('Change Password...'),
         ),
         const Divider(height: 1),
@@ -371,7 +355,7 @@ class File4BaseMenuBar extends StatelessWidget {
           child: const Text('Page Setup...'),
         ),
         MenuItemButton(
-          onPressed: () => onModeChanged(OperationalMode.preview),
+          onPressed: onPrint ?? () => onModeChanged(OperationalMode.preview),
           shortcut: const SingleActivator(LogicalKeyboardKey.keyP, meta: true),
           child: const Text('Print...'),
         ),
@@ -398,25 +382,10 @@ class File4BaseMenuBar extends StatelessWidget {
           child: const Text('Import Records'),
         ),
         MenuItemButton(
-          onPressed: () => _showRoadmapDialog(context, 'Export Records', 'Roadmap Phase 4', 'Export found set to CSV, JSON, or Excel format.'),
+          onPressed: !isAuthenticated
+              ? () => _showNotice(context, 'Authentication Required', 'Please sign in to export records.')
+              : (onExportRecords ?? () => _showRoadmapDialog(context, 'Export Records', 'Roadmap Phase 4', 'Export records to CSV, JSON, XML, or Excel format.')),
           child: const Text('Export Records...'),
-        ),
-        SubmenuButton(
-          menuChildren: [
-            MenuItemButton(
-              onPressed: () => _showNotice(context, 'Save as Excel', 'Generating Excel spreadsheet of active records.'),
-              child: const Text('Excel...'),
-            ),
-            MenuItemButton(
-              onPressed: () => onModeChanged(OperationalMode.preview),
-              child: const Text('PDF...'),
-            ),
-            MenuItemButton(
-              onPressed: () => _showNotice(context, 'Save Snapshot Link', 'Exporting found set snapshot file4base link.'),
-              child: const Text('Snapshot Link...'),
-            ),
-          ],
-          child: const Text('Save/Send Records As'),
         ),
         MenuItemButton(
           onPressed: () => _showNotice(context, 'Recover', 'Check database consistency and index integrity.'),
@@ -1030,7 +999,7 @@ class File4BaseMenuBar extends StatelessWidget {
         ),
         const Divider(height: 1),
         MenuItemButton(
-          onPressed: () => CheckUpdatesDialog.show(context, currentVersion: '0.4.22'),
+          onPressed: () => CheckUpdatesDialog.show(context, currentVersion: '0.4.23'),
           leadingIcon: const Icon(Icons.system_update_outlined, size: 18),
           child: const Text('Check for Updates...'),
         ),

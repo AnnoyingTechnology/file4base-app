@@ -18,6 +18,10 @@ void triggerBrowserDownload(Uint8List bytes, String filename) {
   // Desktop target stub - handled via file picker/local disk writing
 }
 
+void triggerPlatformPrint() {
+  // Desktop target stub
+}
+
 Future<PlatformDirectoryResult?> platformPickDirectory() async {
   final path = await FilePicker.getDirectoryPath(
     dialogTitle: 'Select Destination Folder on Hard Drive',

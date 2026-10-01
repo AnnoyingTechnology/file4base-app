@@ -78,11 +78,18 @@ class _PreflightDialogState extends State<PreflightDialog> {
       }
     } else if (_dockerReq!.status == RequirementStatus.daemonNotRunning) {
       setState(() {
-        _actionMessage = 'Attempting to launch Docker Desktop...';
+        _isLoading = true;
+        _actionMessage = 'Starting Docker Desktop & File4Base containers...';
       });
-      await EnvironmentChecker.startDockerDesktop();
-      // Wait a few seconds and recheck
-      await Future.delayed(const Duration(seconds: 4));
+      await EnvironmentChecker.startDockerAndContainers(
+        onProgress: (status) {
+          if (mounted) {
+            setState(() {
+              _actionMessage = status;
+            });
+          }
+        },
+      );
       await _checkRequirements();
     }
   }

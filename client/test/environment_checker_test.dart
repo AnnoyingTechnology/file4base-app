@@ -59,5 +59,41 @@ void main() {
         await server.close();
       }
     });
+
+    test('checkDocker fast-path succeeds when server returns 200 health with MariaDB', () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      server.listen((HttpRequest request) {
+        if (request.uri.path == '/healthz') {
+          request.response
+            ..statusCode = HttpStatus.ok
+            ..headers.contentType = ContentType.json
+            ..write(jsonEncode({
+              'status': 'pass',
+              'engine': 'mariadb',
+              'database': 'connected',
+              'uptime_seconds': 45,
+            }))
+            ..close();
+        } else {
+          request.response
+            ..statusCode = HttpStatus.notFound
+            ..close();
+        }
+      });
+
+      try {
+        final serverUrl = 'http://localhost:${server.port}';
+        final req = await EnvironmentChecker.checkDocker(serverUrl: serverUrl);
+        expect(req.status, RequirementStatus.satisfied);
+        expect(req.description, contains('mariadb'));
+      } finally {
+        await server.close();
+      }
+    });
+
+    test('checkProjectContainers returns valid state structure', () async {
+      final status = await EnvironmentChecker.checkProjectContainers();
+      expect(status.description, isNotEmpty);
+    });
   });
 }

@@ -1,5 +1,5 @@
 import 'dart:convert' show jsonDecode, utf8;
-import 'dart:io' show File, HttpClient, Platform, Process;
+import 'dart:io' show Directory, File, HttpClient, Platform, Process;
 import 'package:flutter/foundation.dart' show kIsWeb;
 
 enum RequirementStatus {
@@ -153,6 +153,17 @@ class EnvironmentChecker {
         );
       }
 
+      // Check if project containers are already running
+      final containerStatus = await checkProjectContainers(dockerExe: dockerExe);
+      if (containerStatus.isRunning) {
+        return SystemRequirement(
+          title: 'Docker Engine & Containers',
+          description: 'Docker and File4Base services are active.',
+          status: RequirementStatus.satisfied,
+          detail: containerStatus.description,
+        );
+      }
+
       final versionResult = await Process.run(dockerExe, ['--version']);
       final versionText = versionResult.stdout.toString().trim();
 
@@ -171,6 +182,44 @@ class EnvironmentChecker {
         actionLabel: 'Download Docker Desktop',
         downloadUrl: _getDockerDownloadUrl(),
       );
+    }
+  }
+
+  /// Checks if any File4Base database (postgres or mariadb) and api/web containers are running.
+  static Future<({bool isRunning, String description})> checkProjectContainers({String? dockerExe}) async {
+    if (kIsWeb) return (isRunning: true, description: 'Web client');
+    try {
+      final exe = dockerExe ?? await resolveDockerExecutable();
+      if (exe == null) return (isRunning: false, description: 'Docker CLI not found');
+
+      final res = await Process.run(exe, ['ps', '--format', '{{.Names}}']);
+      if (res.exitCode != 0) return (isRunning: false, description: 'Cannot query containers');
+
+      final names = res.stdout.toString().split('\n').map((e) => e.trim()).where((e) => e.isNotEmpty).toList();
+      final hasPostgres = names.contains('file4base-postgres');
+      final hasMariaDb = names.contains('file4base-mariadb');
+      final hasApi = names.contains('file4base-api');
+      final hasWeb = names.contains('file4base-web');
+
+      // Either Postgres OR MariaDB is sufficient as the database engine!
+      final hasDb = hasPostgres || hasMariaDb;
+      final activeDbName = hasPostgres ? 'PostgreSQL' : (hasMariaDb ? 'MariaDB' : 'None');
+
+      if (hasDb && hasApi) {
+        final webNote = hasWeb ? ', Web' : '';
+        return (
+          isRunning: true,
+          description: 'Containers running ($activeDbName, API$webNote)',
+        );
+      } else if (hasDb) {
+        return (
+          isRunning: true,
+          description: 'Database container running ($activeDbName)',
+        );
+      }
+      return (isRunning: false, description: 'No File4Base containers running');
+    } catch (e) {
+      return (isRunning: false, description: e.toString());
     }
   }
 
@@ -235,6 +284,7 @@ class EnvironmentChecker {
     }
   }
 
+  /// Attempts to launch Docker Desktop application or start dockerd service.
   static Future<bool> startDockerDesktop() async {
     if (kIsWeb) return false;
     try {
@@ -252,18 +302,82 @@ class EnvironmentChecker {
     return false;
   }
 
-  static Future<bool> startProjectContainers({String? projectDir}) async {
+  /// Polls for the Docker daemon to become responsive up to maxWaitSeconds.
+  static Future<bool> waitForDockerDaemon({int maxWaitSeconds = 30}) async {
+    if (kIsWeb) return false;
+    final dockerExe = await resolveDockerExecutable();
+    if (dockerExe == null) return false;
+
+    final stopwatch = Stopwatch()..start();
+    while (stopwatch.elapsed.inSeconds < maxWaitSeconds) {
+      try {
+        final res = await Process.run(dockerExe, ['info']);
+        if (res.exitCode == 0) return true;
+      } catch (_) {}
+      await Future.delayed(const Duration(seconds: 2));
+    }
+    return false;
+  }
+
+  /// Launches the project's docker compose services (postgres, api, web).
+  /// Either PostgreSQL or MariaDB can be used. Default starts postgres and api.
+  static Future<bool> startProjectContainers({String? projectDir, bool withWeb = true}) async {
     if (kIsWeb) return false;
     try {
       final dockerExe = await resolveDockerExecutable();
       if (dockerExe == null) return false;
+
+      // Locate project directory containing docker-compose.yml if not provided
+      String? targetDir = projectDir;
+      if (targetDir == null) {
+        final candidates = [
+          Directory.current.path,
+          '..',
+          Platform.environment['FILE4BASE_HOME'],
+        ];
+        for (final c in candidates) {
+          if (c != null && File('$c/docker-compose.yml').existsSync()) {
+            targetDir = c;
+            break;
+          }
+        }
+      }
+
+      final services = withWeb ? ['postgres', 'api', 'web'] : ['postgres', 'api'];
       final result = await Process.run(
         dockerExe,
-        ['compose', 'up', '-d', 'postgres', 'api'],
-        workingDirectory: projectDir,
+        ['compose', 'up', '-d', ...services],
+        workingDirectory: targetDir,
       );
       return result.exitCode == 0;
     } catch (_) {
+      return false;
+    }
+  }
+
+  /// Launches Docker Desktop, waits for the daemon to start, and runs the project containers.
+  static Future<bool> startDockerAndContainers({
+    Function(String status)? onProgress,
+    String? projectDir,
+  }) async {
+    if (kIsWeb) return false;
+    onProgress?.call('Starting Docker Desktop...');
+    await startDockerDesktop();
+
+    onProgress?.call('Waiting for Docker daemon to initialize...');
+    final isReady = await waitForDockerDaemon(maxWaitSeconds: 30);
+    if (!isReady) {
+      onProgress?.call('Docker daemon did not respond within timeout.');
+      return false;
+    }
+
+    onProgress?.call('Starting File4Base containers...');
+    final started = await startProjectContainers(projectDir: projectDir);
+    if (started) {
+      onProgress?.call('File4Base containers launched successfully.');
+      return true;
+    } else {
+      onProgress?.call('Could not start File4Base containers automatically.');
       return false;
     }
   }

@@ -9,7 +9,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.4.22] - 2026-09-30
+## [0.4.24] - 2026-10-01
+
+### Fixed
+- **Desktop Environment Preflight & Database Engine Validation**:
+  - **Single Active Database Engine Validation**: Corrected the preflight check so that having either PostgreSQL OR MariaDB active (with the API and Web containers or healthy `/healthz` returning 200) satisfies startup requirements without failing or demanding both engines concurrently.
+  - **Automated Docker Desktop & Container Launch**: Added `startDockerAndContainers` in `EnvironmentChecker` and integrated it with `PreflightDialog`. When Docker Desktop is closed or stopped, users can click "Launch Docker Desktop" to automatically launch Docker Desktop, poll for the daemon to become responsive, and start the project containers (`postgres`, `api`, `web`) without requiring manual terminal intervention.
+  - **Container State Discovery**: Added `checkProjectContainers` using `docker ps` to verify running container state (`file4base-postgres` or `file4base-mariadb` + `file4base-api` + `file4base-web`) so the desktop application immediately identifies ready local services.
+  - **Dynamic Engine Status**: Updated desktop status bar and authentication workflow to dynamically show the active database engine (`PostgreSQL` or `MariaDB`) rather than assuming PostgreSQL.
+
+## [0.4.23] - 2026-10-01
+
+### Changed
+- **File Menu Streamlining & Enhancements**:
+  - **Removed "Close"**: Removed the redundant "Close" option from the `File` menu.
+  - **Removed "Sharing" Submenu**: Cleaned up the non-functional `Sharing` submenu (`Share with File4Base Clients...`, `Enable File4Base WebDirect...`, `Share with ODBC/JDBC...`).
+  - **Removed "Save/Send Records As" Submenu**: Removed the non-functional `Save/Send Records As` submenu (which contained Excel, PDF, Snapshot Link placeholders).
+  - **Active User Password Modification**: The `File -> Change Password...` menu option now opens a dedicated `ChangePasswordDialog` that allows the authenticated user to update their account password directly on the active database.
+  - **Comprehensive Record Export**: The `File -> Export Records...` menu option now launches an `ExportRecordsDialog` supporting export to standard formats: CSV, TSV/Excel, JSON, XML, and HTML table with optional header fields.
+  - **Native Platform Printing**: Wired `File -> Print...` and the preview toolbar's `Export PDF / Print` button to trigger native browser printing (`window.print()`) in WebDirect mode and platform preview printing.
+  - **Universal Password Visibility Toggles**: Added interactive visibility toggles (`Icons.visibility` / `Icons.visibility_off`) to all password fields across the application, allowing users to temporarily reveal or conceal entered passwords in:
+    - `DatabaseLoginDialog` (Main database authentication & login screen).
+    - `ManageSecurityDialog` (User account creation/edit, duplicate account dialog, and change password dialogs).
+    - `ChangePasswordDialog` (New password and confirm password fields).
+    - `NewDatabaseDialog` (New solution database owner password).
+    - `OpenSolutionDialog` (Server connection password and encrypted file credentials).
+    - `ManageDatabaseDialog` (Create database on server modal).
+    - `FileOptionsDialog` (Auto-login credentials and change password confirmation).
 
 ### Added
 - **Manage Database Global "Databases" Tab & Lifecycle Management**:

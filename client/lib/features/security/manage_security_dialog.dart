@@ -241,11 +241,15 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
                 TextField(
                   controller: confirmController,
                   obscureText: obscure,
-                  decoration: const InputDecoration(
+                  decoration: InputDecoration(
                     labelText: 'Confirmar contraseña',
-                    border: OutlineInputBorder(),
+                    border: const OutlineInputBorder(),
                     isDense: true,
                     prefixIcon: const Icon(Icons.lock_reset, size: 18),
+                    suffixIcon: IconButton(
+                      icon: Icon(obscure ? Icons.visibility_off : Icons.visibility, size: 18),
+                      onPressed: () => setDlgState(() => obscure = !obscure),
+                    ),
                   ),
                 ),
                 if (dialogError != null) ...[
@@ -329,6 +333,7 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
 
     String? dialogError;
     bool isSaving = false;
+    bool obscurePassword = true;
 
     await showDialog(
       context: context,
@@ -441,14 +446,22 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
                                 flex: 4,
                                 child: TextField(
                                   controller: passwordController,
+                                  obscureText: obscurePassword,
                                   decoration: InputDecoration(
                                     labelText: isNew ? 'Contraseña inicial *' : 'Nueva contraseña (opcional)',
                                     hintText: isNew ? 'Obligatorio' : 'Dejar en blanco para no cambiar',
                                     border: const OutlineInputBorder(),
                                     isDense: true,
                                     prefixIcon: const Icon(Icons.lock_outline, size: 18),
+                                    suffixIcon: IconButton(
+                                      icon: Icon(
+                                        obscurePassword ? Icons.visibility_off : Icons.visibility,
+                                        size: 18,
+                                      ),
+                                      onPressed: () => setDlgState(() => obscurePassword = !obscurePassword),
+                                      tooltip: obscurePassword ? 'Mostrar contraseña' : 'Ocultar contraseña',
+                                    ),
                                   ),
-                                  obscureText: true,
                                 ),
                               ),
                               const SizedBox(width: 12),
@@ -688,6 +701,7 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
     final cloneName = '${user.username}_copia';
     final passwordController = TextEditingController();
     String? dialogError;
+    bool obscurePassword = true;
 
     await showDialog(
       context: context,
@@ -716,12 +730,20 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
                 const SizedBox(height: 12),
                 TextField(
                   controller: passwordController,
-                  obscureText: true,
-                  decoration: const InputDecoration(
+                  obscureText: obscurePassword,
+                  decoration: InputDecoration(
                     labelText: 'Contraseña para la nueva cuenta *',
-                    border: OutlineInputBorder(),
+                    border: const OutlineInputBorder(),
                     isDense: true,
-                    prefixIcon: Icon(Icons.lock_outline, size: 18),
+                    prefixIcon: const Icon(Icons.lock_outline, size: 18),
+                    suffixIcon: IconButton(
+                      icon: Icon(
+                        obscurePassword ? Icons.visibility_off : Icons.visibility,
+                        size: 18,
+                      ),
+                      onPressed: () => setDlgState(() => obscurePassword = !obscurePassword),
+                      tooltip: obscurePassword ? 'Mostrar contraseña' : 'Ocultar contraseña',
+                    ),
                   ),
                 ),
                 if (dialogError != null) ...[

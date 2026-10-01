@@ -53,5 +53,11 @@ void main() {
 
     // Verify password validation error is shown
     expect(find.text('Password is required'), findsOneWidget);
+
+    // Verify visibility toggle button exists and toggles state
+    expect(find.byIcon(Icons.visibility_off), findsOneWidget);
+    await tester.tap(find.byIcon(Icons.visibility_off));
+    await tester.pumpAndSettle();
+    expect(find.byIcon(Icons.visibility), findsOneWidget);
   });
 }

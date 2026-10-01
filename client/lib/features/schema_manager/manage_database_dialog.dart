@@ -172,46 +172,57 @@ class _ManageDatabaseDialogState extends ConsumerState<ManageDatabaseDialog>
     final userController = TextEditingController(text: 'admin');
     final passwordController = TextEditingController(text: 'admin');
 
+    bool obscurePassword = true;
+
     await showDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Row(
-          children: [
-            Icon(Icons.add_circle_outline, color: Color(0xFF1E88E5)),
-            SizedBox(width: 8),
-            Text('Create Database on Server'),
-          ],
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: dbNameController,
-              decoration: const InputDecoration(
-                labelText: 'Database Name (e.g. inventory_db)',
-                border: OutlineInputBorder(),
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDlgState) => AlertDialog(
+          title: const Row(
+            children: [
+              Icon(Icons.add_circle_outline, color: Color(0xFF1E88E5)),
+              SizedBox(width: 8),
+              Text('Create Database on Server'),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: dbNameController,
+                decoration: const InputDecoration(
+                  labelText: 'Database Name (e.g. inventory_db)',
+                  border: OutlineInputBorder(),
+                ),
+                autofocus: true,
               ),
-              autofocus: true,
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: userController,
-              decoration: const InputDecoration(
-                labelText: 'Initial Owner User',
-                border: OutlineInputBorder(),
+              const SizedBox(height: 12),
+              TextField(
+                controller: userController,
+                decoration: const InputDecoration(
+                  labelText: 'Initial Owner User',
+                  border: OutlineInputBorder(),
+                ),
               ),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: passwordController,
-              obscureText: true,
-              decoration: const InputDecoration(
-                labelText: 'Owner Password',
-                border: OutlineInputBorder(),
+              const SizedBox(height: 12),
+              TextField(
+                controller: passwordController,
+                obscureText: obscurePassword,
+                decoration: InputDecoration(
+                  labelText: 'Owner Password',
+                  border: const OutlineInputBorder(),
+                  suffixIcon: IconButton(
+                    icon: Icon(
+                      obscurePassword ? Icons.visibility_off : Icons.visibility,
+                      size: 20,
+                    ),
+                    onPressed: () => setDlgState(() => obscurePassword = !obscurePassword),
+                    tooltip: obscurePassword ? 'Show password' : 'Hide password',
+                  ),
+                ),
               ),
-            ),
-          ],
-        ),
+            ],
+          ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
           FilledButton(
@@ -241,8 +252,9 @@ class _ManageDatabaseDialogState extends ConsumerState<ManageDatabaseDialog>
           ),
         ],
       ),
-    );
-  }
+    ),
+  );
+}
 
   Future<void> _loadTables() async {
     setState(() {

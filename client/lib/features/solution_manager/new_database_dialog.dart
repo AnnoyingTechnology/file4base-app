@@ -50,6 +50,7 @@ class _NewDatabaseDialogState extends State<NewDatabaseDialog> {
   StorageDirectoryRef? _selectedDirectory;
   bool _autoCreateDb = true;
   bool _isCreating = false;
+  bool _obscurePassword = true;
   String? _errorMessage;
 
   @override
@@ -374,14 +375,22 @@ class _NewDatabaseDialogState extends State<NewDatabaseDialog> {
                     Expanded(
                       child: TextFormField(
                         controller: _passwordController,
-                        decoration: const InputDecoration(
+                        obscureText: _obscurePassword,
+                        decoration: InputDecoration(
                           labelText: 'Password',
                           hintText: '••••••',
                           helperText: 'Account password',
-                          border: OutlineInputBorder(),
+                          border: const OutlineInputBorder(),
                           isDense: true,
+                          suffixIcon: IconButton(
+                            icon: Icon(
+                              _obscurePassword ? Icons.visibility_off : Icons.visibility,
+                              size: 18,
+                            ),
+                            onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
+                            tooltip: _obscurePassword ? 'Show password' : 'Hide password',
+                          ),
                         ),
-                        obscureText: true,
                       ),
                     ),
                   ],

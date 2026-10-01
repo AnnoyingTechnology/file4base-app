@@ -26,7 +26,9 @@ import 'core/theme/theme_provider.dart';
 import 'features/preflight/preflight_dialog.dart';
 import 'features/schema_manager/manage_database_dialog.dart';
 import 'features/script_workspace/script_workspace_dialog.dart';
+import 'features/security/change_password_dialog.dart';
 import 'features/security/manage_security_dialog.dart';
+import 'features/data_browser/export_records_dialog.dart';
 import 'features/solution_manager/file_options_dialog.dart';
 import 'features/solution_manager/new_database_dialog.dart';
 import 'features/solution_manager/open_solution_dialog.dart';
@@ -167,13 +169,14 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
     }
 
     final client = ref.read(apiClientProvider);
+    Map<String, dynamic>? health;
     try {
-      final health = await client.checkHealth();
+      health = await client.checkHealth();
       if (mounted) {
         setState(() {
-          _serverStatus = 'Online (${health['engine']})';
-          if (health['active_database'] != null) {
-            _activeDatabaseName = health['active_database'].toString();
+          _serverStatus = 'Online (${health?['engine']})';
+          if (health?['active_database'] != null) {
+            _activeDatabaseName = health!['active_database'].toString();
           }
         });
       }
@@ -201,7 +204,8 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
         if (auth.directoryRef != null && auth.directoryRef is StorageDirectoryRef) {
           _activeSolutionDirectory = auth.directoryRef as StorageDirectoryRef;
         }
-        _serverStatus = 'Online (PostgreSQL - ${auth.user.username})';
+        final engineName = health?['engine']?.toString().toUpperCase() == 'MARIADB' ? 'MariaDB' : 'PostgreSQL';
+        _serverStatus = 'Online ($engineName - ${auth.user.username})';
       });
       await _loadUserPermissions();
       await _loadTables();
@@ -1108,6 +1112,58 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
     }
   }
 
+  Future<void> _handleChangePassword() async {
+    if (_currentUser == null) {
+      _startAuthSequence();
+      return;
+    }
+    final client = ref.read(apiClientProvider);
+    final changed = await ChangePasswordDialog.show(
+      context,
+      apiClient: client,
+      currentUser: _currentUser!,
+      databaseName: _activeDatabaseName,
+    );
+    if (changed == true && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Password for "${_currentUser!.username}" updated successfully.'),
+          backgroundColor: Colors.green.shade700,
+        ),
+      );
+    }
+  }
+
+  Future<void> _handleExportRecords() async {
+    if (_currentUser == null) {
+      _startAuthSequence();
+      return;
+    }
+    if (_tables.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No tables available to export.'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+    final client = ref.read(apiClientProvider);
+    await ExportRecordsDialog.show(
+      context,
+      apiClient: client,
+      tables: _tables,
+      initialTable: _selectedTable,
+    );
+  }
+
+  void _handlePrint() {
+    if (ref.read(operationalModeProvider) != OperationalMode.preview) {
+      _changeMode(OperationalMode.preview);
+    }
+    SolutionStorageService.triggerPrint();
+  }
+
   @override
   Widget build(BuildContext context) {
     final mode = ref.watch(operationalModeProvider);
@@ -1231,7 +1287,10 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                   onSaveCopyAs: _handleSaveCopyAs,
                   onExportData: _handleExportData,
                   onFileOptions: _handleFileOptions,
+                  onChangePassword: _handleChangePassword,
                   onPageSetup: _handlePageSetup,
+                  onPrint: _handlePrint,
+                  onExportRecords: _handleExportRecords,
                   onSaveLayout: () => _layoutDesignerKey.currentState?.saveLayout(),
                   onNewRecord: () => _dataBrowserKey.currentState?.createNewRecord(),
                   onDuplicateRecord: () => _dataBrowserKey.currentState?.createNewRecord(),

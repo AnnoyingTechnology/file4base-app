@@ -68,6 +68,7 @@ class _OpenSolutionDialogState extends State<OpenSolutionDialog> with SingleTick
   String? _serverError;
   final _serverUserCtrl = TextEditingController(text: 'admin');
   final _serverPassCtrl = TextEditingController();
+  bool _obscureServerPass = true;
 
   // Local File State
   PickedSolutionFile? _pickedFile;
@@ -76,6 +77,7 @@ class _OpenSolutionDialogState extends State<OpenSolutionDialog> with SingleTick
   String? _fileError;
   final _fileUserCtrl = TextEditingController(text: 'admin');
   final _filePassCtrl = TextEditingController();
+  bool _obscureFilePass = true;
 
   @override
   void initState() {
@@ -479,13 +481,21 @@ class _OpenSolutionDialogState extends State<OpenSolutionDialog> with SingleTick
               Expanded(
                 child: TextField(
                   controller: _serverPassCtrl,
-                  obscureText: true,
-                  decoration: const InputDecoration(
+                  obscureText: _obscureServerPass,
+                  decoration: InputDecoration(
                     labelText: 'Password',
                     hintText: '••••••',
-                    border: OutlineInputBorder(),
+                    border: const OutlineInputBorder(),
                     isDense: true,
-                    prefixIcon: Icon(Icons.lock_outline, size: 20),
+                    prefixIcon: const Icon(Icons.lock_outline, size: 20),
+                    suffixIcon: IconButton(
+                      icon: Icon(
+                        _obscureServerPass ? Icons.visibility_off : Icons.visibility,
+                        size: 20,
+                      ),
+                      onPressed: () => setState(() => _obscureServerPass = !_obscureServerPass),
+                      tooltip: _obscureServerPass ? 'Show password' : 'Hide password',
+                    ),
                   ),
                   onSubmitted: (_) => _handleServerConnect(),
                 ),
@@ -617,13 +627,21 @@ class _OpenSolutionDialogState extends State<OpenSolutionDialog> with SingleTick
                 Expanded(
                   child: TextField(
                     controller: _filePassCtrl,
-                    obscureText: true,
-                    decoration: const InputDecoration(
+                    obscureText: _obscureFilePass,
+                    decoration: InputDecoration(
                       labelText: 'Password',
                       hintText: '••••••',
-                      border: OutlineInputBorder(),
+                      border: const OutlineInputBorder(),
                       isDense: true,
-                      prefixIcon: Icon(Icons.lock_outline, size: 20),
+                      prefixIcon: const Icon(Icons.lock_outline, size: 20),
+                      suffixIcon: IconButton(
+                        icon: Icon(
+                          _obscureFilePass ? Icons.visibility_off : Icons.visibility,
+                          size: 20,
+                        ),
+                        onPressed: () => setState(() => _obscureFilePass = !_obscureFilePass),
+                        tooltip: _obscureFilePass ? 'Show password' : 'Hide password',
+                      ),
                     ),
                     onSubmitted: (_) => _handleOpenFile(),
                   ),

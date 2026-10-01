@@ -26,6 +26,10 @@ void triggerBrowserDownload(Uint8List bytes, String filename) {
   web.URL.revokeObjectURL(url);
 }
 
+void triggerPlatformPrint() {
+  web.window.print();
+}
+
 Future<PlatformFileResult?> platformPickFile({
   List<String> allowedExtensions = const ['f4p', 'f4b', 'f4data', 'msgpack'],
 }) async {

@@ -230,12 +230,72 @@ void main() {
 
     // Verify CheckUpdatesDialog opens
     expect(find.text('Check for Updates'), findsOneWidget);
-    expect(find.text('File4Base v0.4.22'), findsOneWidget);
+    expect(find.text('File4Base v0.4.23'), findsOneWidget);
     expect(find.text('Ver Releases en GitHub'), findsOneWidget);
 
     // Close Updates dialog
     await tester.tap(find.text('Aceptar'));
     await tester.pumpAndSettle();
     expect(find.text('Check for Updates'), findsNothing);
+  });
+
+  testWidgets('File menu has removed Close, Sharing, and Save/Send Records As, and triggers callbacks', (WidgetTester tester) async {
+    bool changePasswordCalled = false;
+    bool exportRecordsCalled = false;
+    bool printCalled = false;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: File4BaseMenuBar(
+            activeMode: OperationalMode.browse,
+            isAuthenticated: true,
+            onChangePassword: () => changePasswordCalled = true,
+            onExportRecords: () => exportRecordsCalled = true,
+            onPrint: () => printCalled = true,
+            onModeChanged: (_) {},
+            onManageDatabase: () {},
+            onOpenRemote: () {},
+            onAbout: () {},
+            isToolbarVisible: true,
+            onToggleToolbar: (_) {},
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    // Open File menu
+    await tester.tap(find.text('File'));
+    await tester.pumpAndSettle();
+
+    // 1. Verify removed items
+    expect(find.text('Close'), findsNothing);
+    expect(find.text('Sharing'), findsNothing);
+    expect(find.text('Save/Send Records As'), findsNothing);
+
+    // 2. Verify present items
+    expect(find.text('Change Password...'), findsOneWidget);
+    expect(find.text('Export Records...'), findsOneWidget);
+    expect(find.text('Print...'), findsOneWidget);
+
+    // 3. Test Change Password callback
+    await tester.tap(find.text('Change Password...'));
+    await tester.pumpAndSettle();
+    expect(changePasswordCalled, isTrue);
+
+    // Reopen File menu & test Export Records callback
+    await tester.tap(find.text('File'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Export Records...'));
+    await tester.pumpAndSettle();
+    expect(exportRecordsCalled, isTrue);
+
+    // Reopen File menu & test Print callback
+    await tester.tap(find.text('File'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Print...'));
+    await tester.pumpAndSettle();
+    expect(printCalled, isTrue);
   });
 }

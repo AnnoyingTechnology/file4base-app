@@ -29,6 +29,7 @@ class _DatabaseLoginDialogState extends State<DatabaseLoginDialog> {
   String? _selectedDatabase;
   bool _isLoadingDatabases = true;
   bool _isLoggingIn = false;
+  bool _obscurePassword = true;
   String? _errorMessage;
 
   @override
@@ -384,15 +385,23 @@ class _DatabaseLoginDialogState extends State<DatabaseLoginDialog> {
                     const SizedBox(height: 12),
                     TextFormField(
                       controller: _passwordController,
-                      decoration: const InputDecoration(
+                      obscureText: _obscurePassword,
+                      decoration: InputDecoration(
                         labelText: 'Password',
                         hintText: 'Enter access password',
                         helperText: 'Database password required for authentication',
-                        border: OutlineInputBorder(),
+                        border: const OutlineInputBorder(),
                         isDense: true,
-                        prefixIcon: Icon(Icons.lock_outline, size: 20),
+                        prefixIcon: const Icon(Icons.lock_outline, size: 20),
+                        suffixIcon: IconButton(
+                          icon: Icon(
+                            _obscurePassword ? Icons.visibility_off : Icons.visibility,
+                            size: 20,
+                          ),
+                          onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
+                          tooltip: _obscurePassword ? 'Show password' : 'Hide password',
+                        ),
                       ),
-                      obscureText: true,
                       validator: (v) => (v == null || v.trim().isEmpty) ? 'Password is required' : null,
                       onFieldSubmitted: (_) => _handleLogin(),
                     ),

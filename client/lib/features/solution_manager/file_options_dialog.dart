@@ -178,10 +178,14 @@ class _FileOptionsDialogState extends State<FileOptionsDialog> with SingleTicker
                 TextField(
                   controller: confirmPasswordCtrl,
                   obscureText: obscure,
-                  decoration: const InputDecoration(
+                  decoration: InputDecoration(
                     labelText: 'Confirmar Contraseña',
-                    border: OutlineInputBorder(),
+                    border: const OutlineInputBorder(),
                     isDense: true,
+                    suffixIcon: IconButton(
+                      icon: Icon(obscure ? Icons.visibility_off : Icons.visibility, size: 18),
+                      onPressed: () => setDialogState(() => obscure = !obscure),
+                    ),
                   ),
                 ),
               ],
