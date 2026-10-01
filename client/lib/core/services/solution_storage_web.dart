@@ -30,6 +30,12 @@ void triggerPlatformPrint() {
   web.window.print();
 }
 
+void triggerPlatformQuit() {
+  try {
+    web.window.close();
+  } catch (_) {}
+}
+
 Future<PlatformFileResult?> platformPickFile({
   List<String> allowedExtensions = const ['f4p', 'f4b', 'f4data', 'msgpack'],
 }) async {

@@ -118,6 +118,13 @@ class SolutionStorageService {
     triggerPlatformPrint();
   }
 
+  /// Triggers platform quit/close.
+  /// On Desktop, terminates process cleanly.
+  /// On Web Direct, closes the browser tab/window.
+  static void triggerQuit() {
+    triggerPlatformQuit();
+  }
+
   /// Prompts the user to pick a solution file (.f4p new, .f4b legacy) or data file (.f4data).
   /// On Desktop, uses native OS file picker.
   /// On Web, uses HTML5 file chooser without throwing UnimplementedError.

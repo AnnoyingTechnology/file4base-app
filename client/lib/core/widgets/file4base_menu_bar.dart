@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
+import '../services/solution_storage.dart';
 import '../../features/help/check_updates_dialog.dart';
 import '../../features/help/issues_guide_dialog.dart';
 import '../../main.dart';
@@ -40,6 +41,7 @@ class File4BaseMenuBar extends StatelessWidget {
   final VoidCallback? onChangePassword;
   final VoidCallback? onExportRecords;
   final VoidCallback? onPrint;
+  final VoidCallback? onQuit;
   final bool isAuthenticated;
   final VoidCallback? onSignIn;
   final VoidCallback? onSignOut;
@@ -66,6 +68,7 @@ class File4BaseMenuBar extends StatelessWidget {
     this.onChangePassword,
     this.onPageSetup,
     this.onPrint,
+    this.onQuit,
     this.onExportRecords,
     this.onNewRecord,
     this.onDuplicateRecord,
@@ -390,6 +393,18 @@ class File4BaseMenuBar extends StatelessWidget {
         MenuItemButton(
           onPressed: () => _showNotice(context, 'Recover', 'Check database consistency and index integrity.'),
           child: const Text('Recover...'),
+        ),
+        const Divider(height: 1),
+        MenuItemButton(
+          onPressed: onQuit ?? () => SolutionStorageService.triggerQuit(),
+          shortcut: const SingleActivator(LogicalKeyboardKey.keyQ, meta: true),
+          child: const Row(
+            children: [
+              Icon(Icons.exit_to_app, size: 16, color: Colors.redAccent),
+              SizedBox(width: 8),
+              Text('Quit'),
+            ],
+          ),
         ),
       ],
       child: const Text('File', style: TextStyle(fontSize: 13)),

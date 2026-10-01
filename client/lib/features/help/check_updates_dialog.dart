@@ -6,7 +6,7 @@ class CheckUpdatesDialog extends StatelessWidget {
 
   const CheckUpdatesDialog({super.key, required this.currentVersion});
 
-  static Future<void> show(BuildContext context, {String currentVersion = '0.4.19'}) {
+  static Future<void> show(BuildContext context, {String currentVersion = '0.4.25'}) {
     return showDialog(
       context: context,
       barrierColor: Colors.black54,

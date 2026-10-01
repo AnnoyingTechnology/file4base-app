@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.25] - 2026-10-01
+
+### Added
+- **File Menu Quit Action with Auto-Save Safety**:
+  - Added `Quit` action at the bottom of the `File` menu (with shortcut `Cmd+Q` / `Ctrl+Q`).
+  - Automatically commits pending layout edits when in Layout Mode.
+  - Flushes debounced auto-save immediately to persist all solution configuration and metadata to disk.
+  - Prompts a confirmation dialog before terminating the process on Desktop or closing the tab/window in WebDirect mode (`SolutionStorageService.triggerQuit()`).
+
 ## [0.4.24] - 2026-10-01
 
 ### Fixed

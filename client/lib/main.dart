@@ -1164,6 +1164,55 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
     SolutionStorageService.triggerPrint();
   }
 
+  Future<void> _handleQuit() async {
+    // 1. If currently in Layout mode, commit pending layout changes
+    final mode = ref.read(operationalModeProvider);
+    if (mode == OperationalMode.layout) {
+      try {
+        await _layoutDesignerKey.currentState?.saveLayout();
+      } catch (_) {}
+    }
+
+    // 2. If authenticated and dirty/active, flush auto-save to disk
+    try {
+      await AutoSaveService.instance.flushNow();
+    } catch (_) {}
+
+    // 3. Confirm exit if needed, or close immediately
+    if (!mounted) return;
+    final shouldQuit = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.exit_to_app, color: Colors.redAccent),
+            SizedBox(width: 8),
+            Text('Quit File4Base'),
+          ],
+        ),
+        content: const Text(
+          'All changes have been saved. Are you sure you want to close the application?',
+          style: TextStyle(fontSize: 14),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.redAccent),
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Quit'),
+          ),
+        ],
+      ),
+    );
+
+    if (shouldQuit == true) {
+      SolutionStorageService.triggerQuit();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final mode = ref.watch(operationalModeProvider);
@@ -1179,6 +1228,8 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
         const SingleActivator(LogicalKeyboardKey.keyO, meta: true): () => _handleOpenSolution(),
         const SingleActivator(LogicalKeyboardKey.keyN, meta: true): () => _handleNewDatabase(),
         const SingleActivator(LogicalKeyboardKey.keyP, meta: true, shift: true): () => _handlePageSetup(),
+        const SingleActivator(LogicalKeyboardKey.keyQ, meta: true): () => _handleQuit(),
+        const SingleActivator(LogicalKeyboardKey.keyQ, control: true): () => _handleQuit(),
         const SingleActivator(LogicalKeyboardKey.equal, meta: true): () => ref.read(zoomProvider.notifier).zoomIn(),
         const SingleActivator(LogicalKeyboardKey.equal, control: true): () => ref.read(zoomProvider.notifier).zoomIn(),
         const SingleActivator(LogicalKeyboardKey.add, meta: true): () => ref.read(zoomProvider.notifier).zoomIn(),
@@ -1290,6 +1341,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                   onChangePassword: _handleChangePassword,
                   onPageSetup: _handlePageSetup,
                   onPrint: _handlePrint,
+                  onQuit: _handleQuit,
                   onExportRecords: _handleExportRecords,
                   onSaveLayout: () => _layoutDesignerKey.currentState?.saveLayout(),
                   onNewRecord: () => _dataBrowserKey.currentState?.createNewRecord(),

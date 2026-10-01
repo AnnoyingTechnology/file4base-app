@@ -22,6 +22,10 @@ void triggerPlatformPrint() {
   // Desktop target stub
 }
 
+void triggerPlatformQuit() {
+  exit(0);
+}
+
 Future<PlatformDirectoryResult?> platformPickDirectory() async {
   final path = await FilePicker.getDirectoryPath(
     dialogTitle: 'Select Destination Folder on Hard Drive',

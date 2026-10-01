@@ -298,4 +298,39 @@ void main() {
     await tester.pumpAndSettle();
     expect(printCalled, isTrue);
   });
+
+  testWidgets('File menu has Quit item and triggers onQuit callback', (WidgetTester tester) async {
+    bool quitCalled = false;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: File4BaseMenuBar(
+            activeMode: OperationalMode.browse,
+            isAuthenticated: true,
+            onQuit: () => quitCalled = true,
+            onModeChanged: (_) {},
+            onManageDatabase: () {},
+            onOpenRemote: () {},
+            onAbout: () {},
+            isToolbarVisible: true,
+            onToggleToolbar: (_) {},
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    // Open File menu
+    await tester.tap(find.text('File'));
+    await tester.pumpAndSettle();
+
+    // Verify Quit button is rendered
+    expect(find.text('Quit'), findsOneWidget);
+
+    // Tap Quit
+    await tester.tap(find.text('Quit'));
+    await tester.pumpAndSettle();
+    expect(quitCalled, isTrue);
+  });
 }
