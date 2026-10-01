@@ -64,12 +64,10 @@ class _DatabaseLoginDialogState extends State<DatabaseLoginDialog> {
           _databases = dbs;
           if (active != null && dbs.contains(active)) {
             _selectedDatabase = active;
-          } else if (dbs.contains('file4base_dev')) {
-            _selectedDatabase = 'file4base_dev';
           } else if (dbs.isNotEmpty) {
             _selectedDatabase = dbs.first;
           } else {
-            _selectedDatabase = 'file4base_dev';
+            _selectedDatabase = null;
           }
           if (_usernameController.text.trim().isEmpty) {
             _usernameController.text = 'admin';
@@ -82,8 +80,8 @@ class _DatabaseLoginDialogState extends State<DatabaseLoginDialog> {
     } catch (e) {
       if (mounted) {
         setState(() {
-          _databases = ['file4base_dev'];
-          _selectedDatabase = 'file4base_dev';
+          _databases = [];
+          _selectedDatabase = null;
           if (_usernameController.text.trim().isEmpty) {
             _usernameController.text = 'admin';
           }
@@ -204,7 +202,14 @@ class _DatabaseLoginDialogState extends State<DatabaseLoginDialog> {
     try {
       final username = _usernameController.text.trim();
       final password = _passwordController.text.trim();
-      final database = _selectedDatabase ?? 'file4base_dev';
+      final database = _selectedDatabase;
+      if (database == null || database.isEmpty) {
+        setState(() {
+          _isLoggingIn = false;
+          _errorMessage = 'No hay bases de datos disponibles. Pulsa el botón "+" para crear una nueva base de datos.';
+        });
+        return;
+      }
 
       final auth = await widget.apiClient.login(
         username: username,
@@ -333,10 +338,12 @@ class _DatabaseLoginDialogState extends State<DatabaseLoginDialog> {
                               ? const LinearProgressIndicator()
                               : DropdownButtonFormField<String>(
                                   value: _selectedDatabase,
-                                  decoration: const InputDecoration(
-                                    border: OutlineInputBorder(),
+                                  isExpanded: true,
+                                  decoration: InputDecoration(
+                                    border: const OutlineInputBorder(),
                                     isDense: true,
-                                    prefixIcon: Icon(Icons.dataset_outlined, size: 20),
+                                    prefixIcon: const Icon(Icons.dataset_outlined, size: 20),
+                                    hintText: _databases.isEmpty ? 'Ninguna base de datos disponible' : 'Selecciona una base de datos',
                                   ),
                                   items: _databases.map((db) {
                                     return DropdownMenuItem<String>(

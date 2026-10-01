@@ -5,7 +5,7 @@ services:
     container_name: file4base-postgres
     restart: unless-stopped
     environment:
-      POSTGRES_DB: file4base_dev
+      POSTGRES_DB: postgres
       POSTGRES_USER: file4base
       POSTGRES_PASSWORD: dev_password
     ports:
@@ -13,7 +13,7 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U file4base -d file4base_dev"]
+      test: ["CMD-SHELL", "pg_isready -U file4base -d postgres"]
       interval: 5s
       timeout: 3s
       retries: 5
@@ -27,7 +27,7 @@ services:
     restart: unless-stopped
     profiles: ["mariadb"]
     environment:
-      MARIADB_DATABASE: file4base_dev
+      MARIADB_DATABASE: mysql
       MARIADB_USER: file4base
       MARIADB_PASSWORD: dev_password
       MARIADB_ROOT_PASSWORD: root_password
@@ -55,7 +55,7 @@ services:
       - "8080:8080"
     environment:
       DB_ENGINE: "postgres"
-      DATABASE_URL: "postgres://file4base:dev_password@postgres:5432/file4base_dev?sslmode=disable"
+      DATABASE_URL: "postgres://file4base:dev_password@postgres:5432/postgres?sslmode=disable"
       SERVER_PORT: ":8080"
     depends_on:
       postgres:

@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.26] - 2026-10-01
+
+### Changed
+- **Zero-State Clean Database Initialization & Connection**:
+  - Removed default database `file4base_dev` from `docker-compose.yml`, starting PostgreSQL purely with administrative database `postgres` and 0 application databases.
+  - Initialized `ListDatabases` in DBAL with an empty slice `[]` (instead of null JSON) when no user databases exist.
+  - Removed `file4base_dev` pre-selection in `DatabaseLoginDialog`: displays placeholder *"Selecciona una base de datos"* or *"Ninguna base de datos disponible"* when no databases exist.
+  - Added strict validation preventing login without selecting or creating a database via the `+` button or importing an `.f4p` solution file.
+  - Cleaned up all fallback references to `file4base_dev` in solution models, status bar, and security dialogs.
+
 ## [0.4.25] - 2026-10-01
 
 ### Added

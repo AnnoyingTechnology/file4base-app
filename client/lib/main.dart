@@ -114,7 +114,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
   String _serverStatus = 'Checking...';
   String _activeSolutionFileName = 'Untitled.f4p';
   String _activeSolutionName = 'Untitled Solution';
-  String _activeDatabaseName = 'file4base_dev';
+  String _activeDatabaseName = '';
   StorageDirectoryRef? _activeSolutionDirectory;
   List<TableModel> _tables = [];
   TableModel? _selectedTable;
@@ -160,8 +160,8 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
     if (EnvironmentChecker.isTestMode) {
       if (mounted) {
         setState(() {
-          _currentUser = UserModel(id: 'test-owner', username: 'file4base_dev', role: 'owner');
-          _activeDatabaseName = 'file4base_dev';
+          _currentUser = UserModel(id: 'test-owner', username: 'admin', role: 'owner');
+          _activeDatabaseName = 'test_db';
           _serverStatus = 'Online (Test)';
         });
       }
@@ -175,9 +175,6 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
       if (mounted) {
         setState(() {
           _serverStatus = 'Online (${health?['engine']})';
-          if (health?['active_database'] != null) {
-            _activeDatabaseName = health!['active_database'].toString();
-          }
         });
       }
     } catch (_) {
@@ -1588,25 +1585,27 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                   _activeSolutionFileName,
                   style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold),
                 ),
-                const SizedBox(width: 6),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF1E88E5).withValues(alpha: 0.12),
-                    borderRadius: BorderRadius.circular(3),
+                if (_activeDatabaseName.isNotEmpty) ...[
+                  const SizedBox(width: 6),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF1E88E5).withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(3),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.storage, size: 10, color: Color(0xFF1E88E5)),
+                        const SizedBox(width: 3),
+                        Text(
+                          _activeDatabaseName,
+                          style: const TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: Color(0xFF1E88E5)),
+                        ),
+                      ],
+                    ),
                   ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Icon(Icons.storage, size: 10, color: Color(0xFF1E88E5)),
-                      const SizedBox(width: 3),
-                      Text(
-                        _activeDatabaseName,
-                        style: const TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: Color(0xFF1E88E5)),
-                      ),
-                    ],
-                  ),
-                ),
+                ],
               ],
             ),
           ),

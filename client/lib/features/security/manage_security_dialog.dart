@@ -360,10 +360,11 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
                         isNew ? 'Nueva cuenta de usuario' : 'Editar cuenta: ${userToEdit.username}',
                         style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                       ),
-                      Text(
-                        'Base de datos activa: ${widget.databaseName ?? 'file4base_dev'}',
-                        style: const TextStyle(fontSize: 11, color: Colors.grey),
-                      ),
+                      if ((widget.databaseName ?? '').isNotEmpty)
+                        Text(
+                          'Base de datos activa: ${widget.databaseName}',
+                          style: const TextStyle(fontSize: 11, color: Colors.grey),
+                        ),
                     ],
                   ),
                 ),
@@ -943,7 +944,7 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
 
   @override
   Widget build(BuildContext context) {
-    final activeDb = widget.databaseName ?? 'file4base_dev';
+    final activeDb = widget.databaseName ?? '';
 
     return Dialog(
       backgroundColor: Colors.transparent,

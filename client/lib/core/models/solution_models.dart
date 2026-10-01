@@ -77,7 +77,7 @@ class DatabaseConnectionConfig {
       engine: map['engine']?.toString() ?? 'postgres',
       host: map['host']?.toString() ?? 'localhost',
       port: (map['port'] is num) ? (map['port'] as num).toInt() : 5432,
-      database: map['database']?.toString() ?? 'file4base_dev',
+      database: map['database']?.toString() ?? '',
       user: decodeCredential(rawUser),
       password: decodeCredential(rawPassword),
       sslMode: map['ssl_mode']?.toString() ?? 'disable',
@@ -141,7 +141,7 @@ class SolutionPackage {
     var rawDb = map['database_connection'];
     var dbConfig = rawDb is Map
         ? DatabaseConnectionConfig.fromMap(rawDb)
-        : const DatabaseConnectionConfig(database: 'file4base_dev');
+        : const DatabaseConnectionConfig(database: '');
 
     List<Map<String, dynamic>> parseList(dynamic raw) {
       if (raw is List) {

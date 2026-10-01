@@ -96,11 +96,11 @@ class _ManageDatabaseDialogState extends ConsumerState<ManageDatabaseDialog>
     if (targets.isEmpty) return;
 
     // Filter out active or protected databases
-    final toDelete = targets.where((db) => db != _activeDatabase && db != 'postgres' && db != 'file4base_dev').toList();
+    final toDelete = targets.where((db) => db != _activeDatabase && db != 'postgres' && db != 'mysql').toList();
     if (toDelete.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Cannot delete active or protected databases ("file4base_dev", "postgres").'),
+          content: Text('Cannot delete active or protected system database ("postgres").'),
           backgroundColor: Colors.orange,
         ),
       );
@@ -1693,7 +1693,7 @@ class _ManageDatabaseDialogState extends ConsumerState<ManageDatabaseDialog>
                     final dbName = filtered[index - 1];
                     final isChecked = _selectedDatabaseNames.contains(dbName);
                     final isActive = (dbName == _activeDatabase);
-                    final isProtected = (dbName == 'postgres' || dbName == 'file4base_dev');
+                    final isProtected = (dbName == 'postgres' || dbName == 'mysql');
 
                     return InkWell(
                       onTap: () {

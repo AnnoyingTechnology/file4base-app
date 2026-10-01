@@ -21,7 +21,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 )
 
-const AppVersion = "0.4.25"
+const AppVersion = "0.4.26"
 
 func init() {
 	dbal.RegisterDialect(dbal.EnginePostgres, func() dbal.Dialect { return postgres.New() })
@@ -59,9 +59,9 @@ func main() {
 	dsn := os.Getenv("DATABASE_URL")
 	if dsn == "" {
 		if engineType == dbal.EnginePostgres {
-			dsn = "postgres://file4base:dev_password@localhost:5432/file4base_dev?sslmode=disable"
+			dsn = "postgres://file4base:dev_password@localhost:5432/postgres?sslmode=disable"
 		} else {
-			dsn = "file4base:dev_password@tcp(localhost:3306)/file4base_dev?parseTime=true"
+			dsn = "file4base:dev_password@tcp(localhost:3306)/mysql?parseTime=true"
 		}
 	}
 

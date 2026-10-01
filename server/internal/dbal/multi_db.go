@@ -212,7 +212,7 @@ func (m *MultiDatabaseManager) ListDatabases(ctx context.Context) ([]string, err
 	}
 	defer rows.Close()
 
-	var result []string
+	result := []string{}
 	for rows.Next() {
 		var name string
 		if err := rows.Scan(&name); err != nil {
@@ -289,8 +289,8 @@ func (m *MultiDatabaseManager) DropDatabase(ctx context.Context, dbName string) 
 	active := m.activeDBName
 	m.mu.RUnlock()
 
-	if dbName == "postgres" || dbName == "file4base_dev" {
-		return fmt.Errorf("cannot drop protected system/development database '%s'", dbName)
+	if dbName == "postgres" || dbName == "mysql" || dbName == "information_schema" {
+		return fmt.Errorf("cannot drop protected system database '%s'", dbName)
 	}
 
 	if dbName == active {

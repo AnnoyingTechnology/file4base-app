@@ -760,7 +760,7 @@ class _ScriptWorkspaceDialogState extends ConsumerState<ScriptWorkspaceDialog> {
   @override
   Widget build(BuildContext context) {
     final theme = ref.watch(appThemeProvider);
-    final activeDb = widget.databaseName ?? 'file4base_dev';
+    final activeDb = widget.databaseName ?? '';
     final script = _activeScript;
     final activeStep = _activeStep;
 
