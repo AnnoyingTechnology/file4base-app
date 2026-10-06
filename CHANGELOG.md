@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-10-06
+
+### Fixed
+- Scripts created in the Script Workspace did not appear in the button "Perform Script" list: the layout designer loaded the list once and never refreshed it. It now reloads when a button is selected and when the Script Workspace is closed (from the inspector, the Manage menu or the Scripts menu), and shows load errors instead of "No scripts yet".
+- Script Workspace: saving created a new copy of every new script on each save, because scripts kept their local id after the server assigned another one. Created scripts now adopt the server id.
+- Script Workspace: closing the window with unsaved scripts discarded them silently; it now asks to save, discard or cancel.
+
 ## [0.6.0] - 2026-10-06
 
 ### Added

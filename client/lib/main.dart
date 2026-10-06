@@ -1343,6 +1343,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                       client,
                       databaseName: _activeDatabaseName,
                     );
+                    await _layoutDesignerKey.currentState?.reloadScripts();
                   },
                   onScriptWorkspace: () async {
                     if (_currentUser == null) {
@@ -1355,6 +1356,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                       client,
                       databaseName: _activeDatabaseName,
                     );
+                    await _layoutDesignerKey.currentState?.reloadScripts();
                   },
                   onManageThemes: () => ManageThemesDialog.show(context),
                   onOpenRemote: () {

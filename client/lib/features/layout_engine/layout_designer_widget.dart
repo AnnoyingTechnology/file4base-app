@@ -40,7 +40,9 @@ class LayoutDesignerWidget extends StatefulWidget {
   final VoidCallback? onExitLayout;
   final VoidCallback? onManageDatabase;
   final VoidCallback? onManageSecurity;
-  final VoidCallback? onManageScripts;
+  /// Opens the Script Workspace; completes when it is closed, so the
+  /// designer can reload the scripts available to buttons.
+  final Future<void> Function()? onManageScripts;
   final VoidCallback? onManageThemes;
   final VoidCallback onSaved;
   final VoidCallback? onAutoSaveDirty;
@@ -153,9 +155,11 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
   // Set Tab Order mode: objects clicked so far, in order
   final List<String> _tabSequence = [];
 
-  // Scripts available for button actions (loaded on demand)
+  // Scripts available for button actions (loaded on demand, reloaded when a
+  // button is selected and when the Script Workspace closes)
   List<ScriptModel>? _scripts;
   bool _loadingScripts = false;
+  String? _scriptsError;
 
   // Line width for new drawings (status sidebar stroke control)
   double _defaultStrokeWidth = 1.0;
@@ -943,7 +947,9 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
     _lastTapObjectId = obj.id;
     _lastTapTime = now;
     if (_editingTextObjectId != null && _editingTextObjectId != obj.id) _commitInlineEdit();
+    final selectionChanged = _selectedObjectId != obj.id;
     setState(() => _selectedObjectId = obj.id);
+    if (selectionChanged && (obj.type == 'button' || obj.type == 'popover_button')) reloadScripts();
     if (isDoubleClick) _startInlineEdit(obj);
   }
 
@@ -1162,12 +1168,32 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
     setState(() => _loadingScripts = true);
     try {
       final list = await widget.apiClient.listScripts();
-      if (mounted) setState(() => _scripts = list);
-    } catch (_) {
-      if (mounted) setState(() => _scripts = const []);
+      list.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+      if (mounted) {
+        setState(() {
+          _scripts = list;
+          _scriptsError = null;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _scripts = const [];
+          _scriptsError = 'Could not load scripts: $e';
+        });
+      }
     } finally {
       if (mounted) setState(() => _loadingScripts = false);
     }
+  }
+
+  /// Reloads the scripts offered to buttons (after scripts were created or
+  /// renamed in the Script Workspace).
+  Future<void> reloadScripts() => _loadScripts(force: true);
+
+  Future<void> _openScriptWorkspace() async {
+    await widget.onManageScripts?.call();
+    if (mounted) await reloadScripts();
   }
 
   // ─── Dialogs ───────────────────────────────────────────────────────────────
@@ -1511,7 +1537,7 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
                   widget.onManageSecurity?.call();
                   break;
                 case 'scripts':
-                  widget.onManageScripts?.call();
+                  _openScriptWorkspace();
                   break;
                 case 'themes':
                   widget.onManageThemes?.call();
@@ -3941,7 +3967,11 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
       setAction(ButtonActionModel.singleStep(action!.stepType!, params: params));
     }
 
-    if (kind == 'perform_script') _loadScripts();
+    if (kind == 'perform_script' && _scripts == null && !_loadingScripts) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _loadScripts();
+      });
+    }
     final scripts = _scripts ?? const <ScriptModel>[];
 
     return [
@@ -3965,7 +3995,7 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
             case 'single_step':
               setAction(const ButtonActionModel.singleStep('new_record'));
             case 'perform_script':
-              _loadScripts();
+              reloadScripts();
               setAction(const ButtonActionModel(type: 'perform_script'));
           }
         },
@@ -4008,7 +4038,9 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
               labelText: 'Script',
               border: const OutlineInputBorder(),
               isDense: true,
-              helperText: scripts.isEmpty ? 'No scripts yet. Create one in the Script Workspace.' : null,
+              helperText: _scriptsError ??
+                  (scripts.isEmpty ? 'No scripts yet. Create one in the Script Workspace.' : null),
+              helperMaxLines: 3,
               helperStyle: const TextStyle(fontSize: 10),
             ),
             items: scripts
@@ -4037,9 +4069,7 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
         Wrap(
           spacing: 6,
           children: [
-            _actionBtn(Icons.code, 'Script Workspace...', () async {
-              widget.onManageScripts?.call();
-            }),
+            _actionBtn(Icons.code, 'Script Workspace...', _openScriptWorkspace),
             _actionBtn(Icons.refresh, 'Reload scripts', () => _loadScripts(force: true)),
           ],
         ),
