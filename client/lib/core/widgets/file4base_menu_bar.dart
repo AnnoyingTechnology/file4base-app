@@ -5,6 +5,7 @@ import '../services/solution_storage.dart';
 import '../../features/help/check_updates_dialog.dart';
 import '../../features/help/issues_guide_dialog.dart';
 import '../../main.dart';
+import '../../features/layout_engine/layout_object_visuals.dart' show LayoutMergeSymbols;
 
 class File4BaseMenuBar extends StatelessWidget {
   final OperationalMode activeMode;
@@ -46,6 +47,14 @@ class File4BaseMenuBar extends StatelessWidget {
   final VoidCallback? onSignIn;
   final VoidCallback? onSignOut;
 
+  /// Insert menu actions in Layout mode: embed a file (`image`, `pdf`,
+  /// `video`, `file`) in the selected shape or a new object, insert a merge
+  /// symbol (date, time, user name) or a merge field into layout text.
+  final ValueChanged<String>? onInsertMedia;
+  final ValueChanged<String>? onInsertSymbol;
+  final VoidCallback? onInsertMergeField;
+  final String? currentUserName;
+
   const File4BaseMenuBar({
     super.key,
     required this.activeMode,
@@ -86,6 +95,10 @@ class File4BaseMenuBar extends StatelessWidget {
     this.isAuthenticated = true,
     this.onSignIn,
     this.onSignOut,
+    this.onInsertMedia,
+    this.onInsertSymbol,
+    this.onInsertMergeField,
+    this.currentUserName,
   });
 
   void _showNotice(BuildContext context, String title, String message) {
@@ -600,42 +613,71 @@ class File4BaseMenuBar extends StatelessWidget {
   }
 
   // 4. Insert Menu
+  // In Layout mode the items insert into the layout (handlers supplied by the
+  // host); in the other modes they keep their informational notices.
   Widget _buildInsertMenu(BuildContext context) {
+    final media = onInsertMedia;
+    final symbol = onInsertSymbol;
     return SubmenuButton(
       menuChildren: [
         MenuItemButton(
-          onPressed: () => _showNotice(context, 'Insert Picture', 'Select image file (PNG, JPG, WebP) to insert into field.'),
+          leadingIcon: const Icon(Icons.image_outlined, size: 16),
+          onPressed: media != null
+              ? () => media('image')
+              : () => _showNotice(context, 'Insert Picture', 'Select image file (PNG, JPG, WebP) to insert into field.'),
           child: const Text('Picture...'),
         ),
         MenuItemButton(
-          onPressed: () => _showNotice(context, 'Insert Audio/Video', 'Select multimedia stream or file.'),
+          leadingIcon: const Icon(Icons.movie_outlined, size: 16),
+          onPressed: media != null
+              ? () => media('video')
+              : () => _showNotice(context, 'Insert Audio/Video', 'Select multimedia stream or file.'),
           child: const Text('Audio/Video...'),
         ),
         MenuItemButton(
-          onPressed: () => _showNotice(context, 'Insert PDF', 'Attach PDF document.'),
+          leadingIcon: const Icon(Icons.picture_as_pdf_outlined, size: 16),
+          onPressed: media != null
+              ? () => media('pdf')
+              : () => _showNotice(context, 'Insert PDF', 'Attach PDF document.'),
           child: const Text('PDF...'),
         ),
         MenuItemButton(
-          onPressed: () => _showNotice(context, 'Insert QuickTime', 'Embed QuickTime compatible stream.'),
+          onPressed: media != null
+              ? () => media('video')
+              : () => _showNotice(context, 'Insert QuickTime', 'Embed QuickTime compatible stream.'),
           child: const Text('QuickTime...'),
         ),
         MenuItemButton(
-          onPressed: () => _showNotice(context, 'Insert File', 'Store raw binary attachment.'),
+          leadingIcon: const Icon(Icons.attach_file, size: 16),
+          onPressed: media != null
+              ? () => media('file')
+              : () => _showNotice(context, 'Insert File', 'Store raw binary attachment.'),
           child: const Text('File...'),
         ),
         const Divider(height: 1),
         MenuItemButton(
-          onPressed: () => _showNotice(context, 'Current Date', DateTime.now().toIso8601String().split('T').first),
+          onPressed: symbol != null
+              ? () => symbol(LayoutMergeSymbols.currentDate)
+              : () => _showNotice(context, 'Current Date', DateTime.now().toIso8601String().split('T').first),
           child: const Text('Current Date'),
         ),
         MenuItemButton(
-          onPressed: () => _showNotice(context, 'Current Time', TimeOfDay.now().format(context)),
+          onPressed: symbol != null
+              ? () => symbol(LayoutMergeSymbols.currentTime)
+              : () => _showNotice(context, 'Current Time', TimeOfDay.now().format(context)),
           child: const Text('Current Time'),
         ),
         MenuItemButton(
-          onPressed: () => _showNotice(context, 'Current User Name', 'Admin'),
+          onPressed: symbol != null
+              ? () => symbol(LayoutMergeSymbols.currentUser)
+              : () => _showNotice(context, 'Current User Name', currentUserName ?? '(not signed in)'),
           child: const Text('Current User Name'),
         ),
+        if (symbol != null)
+          MenuItemButton(
+            onPressed: () => symbol(LayoutMergeSymbols.pageNumber),
+            child: const Text('Page Number'),
+          ),
         const Divider(height: 1),
         MenuItemButton(
           onPressed: () => _showNotice(context, 'From Index', 'Select value from indexed column values.'),
@@ -646,7 +688,8 @@ class File4BaseMenuBar extends StatelessWidget {
           child: const Text('From Last Visited Record'),
         ),
         MenuItemButton(
-          onPressed: () => _showNotice(context, 'Merge Field', 'Insert dynamic {{Field}} merge marker.'),
+          onPressed: onInsertMergeField ??
+              () => _showNotice(context, 'Merge Field', 'Insert dynamic {{Field}} merge marker.'),
           child: const Text('Merge Field...'),
         ),
         MenuItemButton(

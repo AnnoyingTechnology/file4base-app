@@ -130,12 +130,14 @@ void main() {
     await tester.tap(find.byIcon(Icons.palette_outlined).first);
     await tester.pumpAndSettle();
     expect(find.text('FILL COLOR'), findsOneWidget);
-    expect(find.text('BORDER & CORNERS'), findsOneWidget);
+    expect(find.text('LINE (BORDER) COLOR'), findsOneWidget);
+    expect(find.text('LINE WIDTH & CORNERS'), findsOneWidget);
 
     // 8. Switch Inspector Tab to Typography (Text fields icon)
     await tester.tap(find.byIcon(Icons.text_fields).first);
     await tester.pumpAndSettle();
-    expect(find.text('LABEL / TEXT CONTENT'), findsOneWidget);
+    expect(find.text('TEXT CONTENT'), findsOneWidget);
+    expect(find.text('TEXT COLOR'), findsOneWidget);
     expect(find.text('FONT & SIZE'), findsOneWidget);
     expect(find.text('ALIGNMENT'), findsOneWidget);
 

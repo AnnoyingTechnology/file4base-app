@@ -1,9 +1,14 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math' as math;
+import 'package:flutter/gestures.dart' show DragStartBehavior, kDoubleTapTimeout;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../core/api/api_client.dart';
+import '../../core/models/script_models.dart';
+import '../../core/services/solution_storage.dart';
 import '../../core/widgets/file4base_status_sidebar.dart' show LayoutTool;
+import 'layout_object_visuals.dart';
 import '../schema_manager/manage_database_dialog.dart';
 import '../theme_manager/manage_themes_dialog.dart';
 import 'manage_layouts_dialog.dart';
@@ -42,6 +47,11 @@ class LayoutDesignerWidget extends StatefulWidget {
   final ValueChanged<LayoutDefinitionModel>? onLayoutChanged;
   final LayoutTool activeTool;
 
+  /// Reports tool changes made inside the designer (toolbar picks, the
+  /// automatic return to the pointer after placing an object) so other tool
+  /// palettes can follow.
+  final ValueChanged<LayoutTool>? onToolChanged;
+
   const LayoutDesignerWidget({
     super.key,
     required this.table,
@@ -62,7 +72,12 @@ class LayoutDesignerWidget extends StatefulWidget {
     this.onAutoSaveDirty,
     this.onLayoutChanged,
     this.activeTool = LayoutTool.pointer,
+    this.onToolChanged,
   });
+
+  /// Largest file accepted by Insert > Picture / PDF / Audio-Video / File.
+  /// Media is stored inline in the layout definition.
+  static const maxMediaBytes = 2 * 1024 * 1024;
 
   @override
   State<LayoutDesignerWidget> createState() => LayoutDesignerWidgetState();
@@ -120,6 +135,36 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
   // Global key for canvas drag target
   final GlobalKey _canvasKey = GlobalKey();
 
+  // Keyboard shortcuts (Delete, Cmd+D, Cmd+Z, arrows) only apply while the
+  // canvas has focus, never while typing in a text field.
+  final FocusNode _canvasFocus = FocusNode(debugLabel: 'layout-canvas');
+
+  // Drag-to-draw for the line and shape tools
+  Offset? _drawStart;
+  Rect? _drawRect;
+
+  // In-place text editing on the canvas (double click)
+  String? _editingTextObjectId;
+  final TextEditingController _inlineTextCtrl = TextEditingController();
+  final FocusNode _inlineTextFocus = FocusNode(debugLabel: 'layout-inline-text');
+  String? _lastTapObjectId;
+  DateTime _lastTapTime = DateTime.fromMillisecondsSinceEpoch(0);
+
+  // Set Tab Order mode: objects clicked so far, in order
+  final List<String> _tabSequence = [];
+
+  // Scripts available for button actions (loaded on demand)
+  List<ScriptModel>? _scripts;
+  bool _loadingScripts = false;
+
+  // Line width for new drawings (status sidebar stroke control)
+  double _defaultStrokeWidth = 1.0;
+
+  bool get _isTabOrderMode => _activeTool == LayoutTool.tabOrder;
+
+  static bool _isDrawingTool(LayoutTool t) =>
+      t == LayoutTool.line || t == LayoutTool.rectangle || t == LayoutTool.roundedRect || t == LayoutTool.oval;
+
   @override
   void initState() {
     super.initState();
@@ -140,8 +185,10 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
       _undoStack.clear();
       _redoStack.clear();
     }
-    if (old.activeTool != widget.activeTool) {
+    if (old.activeTool != widget.activeTool && widget.activeTool != _activeTool) {
+      _commitInlineEdit();
       _activeTool = widget.activeTool;
+      if (_isTabOrderMode) _startTabOrderMode();
     }
     if (old.table.id != widget.table.id) {
       _currentTable = widget.table;
@@ -150,11 +197,14 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
 
   @override
   void dispose() {
+    _canvasFocus.dispose();
+    _inlineTextCtrl.dispose();
+    _inlineTextFocus.dispose();
     _autoSaveTimer?.cancel();
     if (_autoSaveStatus == _LayoutSaveStatus.dirty) {
       widget.onLayoutChanged?.call(_layout);
       if (_isPersisted) {
-        widget.apiClient.updateLayout(_layout.id, _layout.name, _layout.toJson()).catchError((_) => null as LayoutModel);
+        widget.apiClient.updateLayout(_layout.id, _layout.name, _layout.toJson()).then((_) {}, onError: (_) {});
       }
     }
     super.dispose();
@@ -446,16 +496,17 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
 
   // ─── Object Creation & Placement ───────────────────────────────────────────
 
-  void _placeObjectFromTool(Offset localPos) {
+  void _placeObjectFromTool(Offset localPos, {Rect? bounds}) {
     if (_activeTool == LayoutTool.pointer ||
         _activeTool == LayoutTool.format ||
-        _activeTool == LayoutTool.rotate) {
+        _activeTool == LayoutTool.rotate ||
+        _activeTool == LayoutTool.tabOrder) {
       return;
     }
 
     if (_activeTool == LayoutTool.part) {
       _showPartSetupDialog('body');
-      setState(() => _activeTool = LayoutTool.pointer);
+      _setTool(LayoutTool.pointer);
       return;
     }
 
@@ -463,6 +514,13 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
     final newId = 'obj_${DateTime.now().millisecondsSinceEpoch}';
     final x = _snap(localPos.dx - 60).clamp(0.0, _layout.width - 40);
     final y = _snap(localPos.dy - 18).clamp(0.0, 3000.0);
+    final stroke = _defaultStrokeWidth;
+
+    // Drawn shapes take the dragged rectangle; a plain click uses a default size.
+    Rect box(double w, double h) => bounds != null
+        ? Rect.fromLTWH(_snap(bounds.left), _snap(bounds.top), math.max(16, _snap(bounds.width)),
+            math.max(16, _snap(bounds.height)))
+        : Rect.fromLTWH(x, y, w, h);
 
     LayoutObjectModel newObj;
     switch (_activeTool) {
@@ -474,27 +532,32 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
         );
         break;
       case LayoutTool.line:
+        final r = _lineBox(bounds ?? Rect.fromLTWH(localPos.dx - 80, localPos.dy, 160, 0), stroke);
         newObj = LayoutObjectModel(
-          id: newId, type: 'line', x: x, y: y, width: 160, height: 2,
-          style: const LayoutObjectStyle(borderColor: '#9E9E9E', borderWidth: 1),
+          id: newId, type: 'line', x: r.left.clamp(0.0, _layout.width - 16), y: math.max(0, r.top),
+          width: r.width, height: r.height,
+          style: LayoutObjectStyle(borderColor: '#616161', borderWidth: stroke),
         );
         break;
       case LayoutTool.rectangle:
+        final r = box(140, 70);
         newObj = LayoutObjectModel(
-          id: newId, type: 'rect', x: x, y: y, width: 140, height: 70,
-          style: const LayoutObjectStyle(borderColor: '#9E9E9E', borderWidth: 1),
+          id: newId, type: 'rect', x: r.left, y: r.top, width: r.width, height: r.height,
+          style: LayoutObjectStyle(borderColor: '#9E9E9E', borderWidth: stroke, cornerRadius: 0, textAlign: 'center'),
         );
         break;
       case LayoutTool.roundedRect:
+        final r = box(140, 70);
         newObj = LayoutObjectModel(
-          id: newId, type: 'rounded_rect', x: x, y: y, width: 140, height: 70,
-          style: const LayoutObjectStyle(borderColor: '#9E9E9E', borderWidth: 1, cornerRadius: 8),
+          id: newId, type: 'rounded_rect', x: r.left, y: r.top, width: r.width, height: r.height,
+          style: LayoutObjectStyle(borderColor: '#9E9E9E', borderWidth: stroke, cornerRadius: 8, textAlign: 'center'),
         );
         break;
       case LayoutTool.oval:
+        final r = box(90, 90);
         newObj = LayoutObjectModel(
-          id: newId, type: 'oval', x: x, y: y, width: 90, height: 90,
-          style: const LayoutObjectStyle(borderColor: '#9E9E9E', borderWidth: 1),
+          id: newId, type: 'oval', x: r.left, y: r.top, width: r.width, height: r.height,
+          style: LayoutObjectStyle(borderColor: '#9E9E9E', borderWidth: stroke, textAlign: 'center'),
         );
         break;
       case LayoutTool.field:
@@ -563,9 +626,10 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
     setState(() {
       _layout = _layout.copyWith(objects: [..._layout.objects, newObj]);
       _selectedObjectId = newId;
-      _activeTool = LayoutTool.pointer; // Return to pointer after placing
     });
+    _setTool(LayoutTool.pointer); // Return to pointer after placing
     _markLayoutDirty();
+    if (newObj.type == 'label') _startInlineEdit(newObj);
   }
 
   void _placeFieldAt({required ColumnModel column, required Offset pos}) {
@@ -749,6 +813,363 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
     _markLayoutDirty();
   }
 
+  void _nudgeSelected(Offset delta, {required bool pushUndo}) {
+    final sel = _selectedObject;
+    if (sel == null || sel.isLocked) return;
+    if (pushUndo) _pushUndoState();
+    _editSelected((sel) => sel.copyWith(
+      x: (sel.x + delta.dx).clamp(0.0, math.max(0.0, _layout.width - sel.width)),
+      y: math.max(0.0, sel.y + delta.dy),
+    ));
+  }
+
+  // ─── Tools ─────────────────────────────────────────────────────────────────
+
+  /// The tool currently active in the designer (for menus and palettes).
+  LayoutTool get activeTool => _activeTool;
+
+  void _setTool(LayoutTool tool) {
+    _commitInlineEdit();
+    setState(() {
+      _activeTool = tool;
+      _drawStart = null;
+      _drawRect = null;
+    });
+    if (tool == LayoutTool.tabOrder) _startTabOrderMode();
+    widget.onToolChanged?.call(tool);
+  }
+
+  /// Applies a line width to the selected object (if it draws a line or a
+  /// border) and uses it for the next drawn objects.
+  void applyStrokeWidth(double width) {
+    _defaultStrokeWidth = width;
+    final sel = _selectedObject;
+    if (sel == null || sel.type == 'field' || sel.type == 'label') {
+      setState(() {});
+      return;
+    }
+    _pushUndoState();
+    _editSelected((sel) => sel.copyWith(style: sel.style.copyWith(borderWidth: width)));
+  }
+
+  // ─── Drag-to-draw (line, rectangle, rounded rectangle, oval) ──────────────
+
+  void _onCanvasPanStart(DragStartDetails d) {
+    if (!_isDrawingTool(_activeTool)) return;
+    setState(() {
+      _drawStart = d.localPosition;
+      _drawRect = Rect.fromPoints(d.localPosition, d.localPosition);
+    });
+  }
+
+  void _onCanvasPanUpdate(DragUpdateDetails d) {
+    if (_drawStart == null) return;
+    setState(() => _drawRect = Rect.fromPoints(_drawStart!, d.localPosition));
+  }
+
+  void _onCanvasPanEnd(DragEndDetails _) {
+    final rect = _drawRect;
+    final start = _drawStart;
+    setState(() {
+      _drawStart = null;
+      _drawRect = null;
+    });
+    if (rect == null || start == null) return;
+    if (rect.width < 6 && rect.height < 6) {
+      _placeObjectFromTool(start);
+      return;
+    }
+    _placeObjectFromTool(start, bounds: rect);
+  }
+
+  /// Box of a line drawn from a drag: the longer axis wins, the box keeps a
+  /// minimum thickness so the line stays easy to select.
+  Rect _lineBox(Rect drag, double stroke) {
+    final thickness = math.max(8.0, stroke + 6);
+    if (drag.width >= drag.height) {
+      final y = drag.center.dy - thickness / 2;
+      return Rect.fromLTWH(_snap(drag.left), _snap(y), math.max(16, _snap(drag.width)), thickness);
+    }
+    final x = drag.center.dx - thickness / 2;
+    return Rect.fromLTWH(_snap(x), _snap(drag.top), thickness, math.max(16, _snap(drag.height)));
+  }
+
+  // ─── In-place text editing ─────────────────────────────────────────────────
+
+  void _startInlineEdit(LayoutObjectModel obj) {
+    if (!obj.hasEditableText || obj.isLocked) return;
+    _commitInlineEdit();
+    setState(() {
+      _selectedObjectId = obj.id;
+      _editingTextObjectId = obj.id;
+      _inlineTextCtrl.text = obj.text;
+      _inlineTextCtrl.selection = TextSelection(baseOffset: 0, extentOffset: obj.text.length);
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _editingTextObjectId == obj.id) _inlineTextFocus.requestFocus();
+    });
+  }
+
+  void _commitInlineEdit() {
+    final id = _editingTextObjectId;
+    if (id == null) return;
+    _editingTextObjectId = null;
+    final obj = _layout.objects.where((o) => o.id == id).firstOrNull;
+    if (obj != null && obj.text != _inlineTextCtrl.text) {
+      _pushUndoState();
+      _updateSelected(obj.copyWith(text: _inlineTextCtrl.text));
+    } else if (mounted) {
+      setState(() {});
+    }
+    _canvasFocus.requestFocus();
+  }
+
+  void _cancelInlineEdit() {
+    setState(() => _editingTextObjectId = null);
+    _canvasFocus.requestFocus();
+  }
+
+  /// Single tap selects; a second tap on the same object within the
+  /// double-click interval starts text editing. Done by hand so selection
+  /// does not wait for the double-tap timeout.
+  void _onObjectTap(LayoutObjectModel obj) {
+    _canvasFocus.requestFocus();
+    if (_isTabOrderMode) {
+      if (obj.isTabStop) _assignNextTabOrder(obj);
+      return;
+    }
+    final now = DateTime.now();
+    final isDoubleClick = _lastTapObjectId == obj.id && now.difference(_lastTapTime) < kDoubleTapTimeout;
+    _lastTapObjectId = obj.id;
+    _lastTapTime = now;
+    if (_editingTextObjectId != null && _editingTextObjectId != obj.id) _commitInlineEdit();
+    setState(() => _selectedObjectId = obj.id);
+    if (isDoubleClick) _startInlineEdit(obj);
+  }
+
+  // ─── Set Tab Order ─────────────────────────────────────────────────────────
+
+  List<LayoutObjectModel> get _tabStops => _layout.objects.where((o) => o.isTabStop).toList();
+
+  /// Tab stops in the order the Tab key visits them in Browse mode.
+  List<LayoutObjectModel> get _orderedTabStops => sortLayoutTabStops(_tabStops);
+
+  void _startTabOrderMode() {
+    _tabSequence.clear();
+    setState(() => _selectedObjectId = null);
+  }
+
+  /// Clicking objects in Set Tab Order mode builds a new sequence: clicked
+  /// objects take positions 1..n in click order, the others keep their
+  /// previous relative order after them.
+  void _assignNextTabOrder(LayoutObjectModel obj) {
+    if (_tabSequence.isEmpty) _pushUndoState();
+    _tabSequence
+      ..remove(obj.id)
+      ..add(obj.id);
+    final previous = _orderedTabStops.map((o) => o.id).toList();
+    final order = [..._tabSequence, ...previous.where((id) => !_tabSequence.contains(id))];
+    _applyTabOrder(order);
+  }
+
+  void _applyTabOrder(List<String> orderedIds) {
+    final position = {for (var i = 0; i < orderedIds.length; i++) orderedIds[i]: i + 1};
+    setState(() {
+      _layout = _layout.copyWith(
+        objects: _layout.objects
+            .map((o) => position.containsKey(o.id) ? o.copyWith(tabOrder: position[o.id]) : o)
+            .toList(),
+      );
+    });
+    _markLayoutDirty();
+  }
+
+  void _autoTabOrder() {
+    _pushUndoState();
+    _tabSequence.clear();
+    final stops = _tabStops
+      ..sort((a, b) {
+        final dy = a.y.compareTo(b.y);
+        return dy != 0 ? dy : a.x.compareTo(b.x);
+      });
+    _applyTabOrder(stops.map((o) => o.id).toList());
+  }
+
+  void _clearTabOrder() {
+    _pushUndoState();
+    _tabSequence.clear();
+    setState(() {
+      _layout = _layout.copyWith(
+        objects: _layout.objects.map((o) => o.tabOrder != null ? o.copyWith(clearTabOrder: true) : o).toList(),
+      );
+    });
+    _markLayoutDirty();
+  }
+
+  // ─── Insert menu (Layout mode) ─────────────────────────────────────────────
+
+  static const _mediaExtensions = {
+    'image': ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp'],
+    'pdf': ['pdf'],
+    'video': ['mp4', 'mov', 'webm', 'm4v', 'mp3', 'wav', 'm4a', 'ogg'],
+    'file': <String>[],
+  };
+
+  static String _mimeFor(String ext) => switch (ext) {
+        'png' => 'image/png',
+        'jpg' || 'jpeg' => 'image/jpeg',
+        'gif' => 'image/gif',
+        'webp' => 'image/webp',
+        'bmp' => 'image/bmp',
+        'pdf' => 'application/pdf',
+        'mp4' || 'm4v' => 'video/mp4',
+        'mov' => 'video/quicktime',
+        'webm' => 'video/webm',
+        'mp3' => 'audio/mpeg',
+        'wav' => 'audio/wav',
+        'm4a' => 'audio/mp4',
+        'ogg' => 'audio/ogg',
+        _ => 'application/octet-stream',
+      };
+
+  /// Insert > Picture / PDF / Audio-Video / File. The file goes inside the
+  /// selected shape (rectangle, rounded rectangle, oval or media object), or
+  /// into a new media object when nothing suitable is selected.
+  /// [kind] is `image`, `pdf`, `video` (audio or video) or `file`.
+  Future<void> insertMedia(String kind) async {
+    _commitInlineEdit();
+    final picked = await SolutionStorageService.pickFile(allowedExtensions: _mediaExtensions[kind] ?? const []);
+    if (picked == null || !mounted) return;
+    if (picked.bytes.length > LayoutDesignerWidget.maxMediaBytes) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('"${picked.name}" is ${(picked.bytes.length / 1048576).toStringAsFixed(1)} MB. '
+            'The limit for files embedded in a layout is ${LayoutDesignerWidget.maxMediaBytes ~/ 1048576} MB.'),
+        backgroundColor: Colors.red,
+      ));
+      return;
+    }
+    final ext = picked.name.contains('.') ? picked.name.split('.').last.toLowerCase() : '';
+    final mime = _mimeFor(ext);
+    final resolvedKind = kind == 'video' && mime.startsWith('audio/') ? 'audio' : kind;
+    final media = LayoutMediaModel(
+      kind: resolvedKind,
+      name: picked.name,
+      mimeType: mime,
+      data: base64Encode(picked.bytes),
+    );
+
+    _pushUndoState();
+    final sel = _selectedObject;
+    if (sel != null && (sel.isShape || sel.type == 'media')) {
+      _editSelected((sel) => sel.copyWith(media: media));
+      return;
+    }
+
+    var w = 200.0, h = 150.0;
+    if (resolvedKind == 'image') {
+      try {
+        final img = await decodeImageFromList(picked.bytes);
+        final scale = math.min(1.0, math.min(320 / img.width, 240 / img.height));
+        w = math.max(24.0, img.width * scale);
+        h = math.max(24.0, img.height * scale);
+        img.dispose();
+      } catch (_) {}
+    } else {
+      w = 160;
+      h = 90;
+    }
+    final obj = LayoutObjectModel(
+      id: 'obj_${DateTime.now().millisecondsSinceEpoch}',
+      type: 'media',
+      x: 40,
+      y: _snap(_headerPart.height + 24),
+      width: w.roundToDouble(),
+      height: h.roundToDouble(),
+      media: media,
+      style: const LayoutObjectStyle(borderWidth: 0, cornerRadius: 0),
+    );
+    setState(() {
+      _layout = _layout.copyWith(objects: [..._layout.objects, obj]);
+      _selectedObjectId = obj.id;
+    });
+    _markLayoutDirty();
+  }
+
+  /// Insert > Current Date / Current Time / Current User Name / Merge Field.
+  /// Inserts the merge [symbol] at the cursor of the text being edited, at
+  /// the end of the selected text object, or as a new text label. Symbols
+  /// are resolved in Browse and Preview modes.
+  void insertText(String symbol) {
+    if (_editingTextObjectId != null) {
+      final sel = _inlineTextCtrl.selection;
+      final text = _inlineTextCtrl.text;
+      final start = sel.isValid ? sel.start : text.length;
+      final end = sel.isValid ? sel.end : text.length;
+      _inlineTextCtrl.value = TextEditingValue(
+        text: text.replaceRange(start, end, symbol),
+        selection: TextSelection.collapsed(offset: start + symbol.length),
+      );
+      _inlineTextFocus.requestFocus();
+      return;
+    }
+    _pushUndoState();
+    final target = _selectedObject;
+    if (target != null && target.hasEditableText) {
+      final sep = target.text.isEmpty || target.text.endsWith(' ') ? '' : ' ';
+      _updateSelected(target.copyWith(text: '${target.text}$sep$symbol'));
+      return;
+    }
+    final obj = LayoutObjectModel(
+      id: 'obj_${DateTime.now().millisecondsSinceEpoch}',
+      type: 'label',
+      x: 40,
+      y: _snap(_headerPart.height + 24),
+      width: math.max(140, symbol.length * 8.0),
+      height: 26,
+      text: symbol,
+      style: const LayoutObjectStyle(fontSize: 13),
+    );
+    setState(() {
+      _layout = _layout.copyWith(objects: [..._layout.objects, obj]);
+      _selectedObjectId = obj.id;
+    });
+    _markLayoutDirty();
+  }
+
+  /// Insert > Merge Field: picks a field of the current table.
+  Future<void> insertMergeField() async {
+    final cols = _currentTable.columns;
+    final picked = await showDialog<String>(
+      context: context,
+      builder: (ctx) => SimpleDialog(
+        title: const Text('Insert Merge Field'),
+        children: [
+          if (cols.isEmpty)
+            const Padding(padding: EdgeInsets.all(16), child: Text('The table has no fields.')),
+          for (final c in cols)
+            SimpleDialogOption(
+              onPressed: () => Navigator.of(ctx).pop(c.name),
+              child: Text('${c.displayName}  (${c.name})', style: const TextStyle(fontSize: 13)),
+            ),
+        ],
+      ),
+    );
+    if (picked != null) insertText(LayoutMergeSymbols.field(picked));
+  }
+
+  Future<void> _loadScripts({bool force = false}) async {
+    if (_loadingScripts || (_scripts != null && !force)) return;
+    setState(() => _loadingScripts = true);
+    try {
+      final list = await widget.apiClient.listScripts();
+      if (mounted) setState(() => _scripts = list);
+    } catch (_) {
+      if (mounted) setState(() => _scripts = const []);
+    } finally {
+      if (mounted) setState(() => _loadingScripts = false);
+    }
+  }
+
   // ─── Dialogs ───────────────────────────────────────────────────────────────
 
   Future<void> _showNewFieldDialog() async {
@@ -914,15 +1335,40 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
     return KeyboardListener(
-      focusNode: FocusNode(),
+      focusNode: _canvasFocus,
       autofocus: true,
       onKeyEvent: (event) {
+        // Keys typed in the inspector or in an inline text editor bubble up to
+        // this listener: only act when the canvas itself has the focus.
+        if (!_canvasFocus.hasPrimaryFocus) return;
+        if (event is KeyDownEvent || event is KeyRepeatEvent) {
+          final step = HardwareKeyboard.instance.isShiftPressed ? 8.0 : 1.0;
+          final nudge = switch (event.logicalKey) {
+            LogicalKeyboardKey.arrowLeft => Offset(-step, 0),
+            LogicalKeyboardKey.arrowRight => Offset(step, 0),
+            LogicalKeyboardKey.arrowUp => Offset(0, -step),
+            LogicalKeyboardKey.arrowDown => Offset(0, step),
+            _ => null,
+          };
+          if (nudge != null) {
+            _nudgeSelected(nudge, pushUndo: event is KeyDownEvent);
+            return;
+          }
+        }
         if (event is KeyDownEvent) {
           if (event.logicalKey == LogicalKeyboardKey.delete ||
               event.logicalKey == LogicalKeyboardKey.backspace) {
             if (_selectedObjectId != null) {
               _deleteSelectedObject();
             }
+          } else if (event.logicalKey == LogicalKeyboardKey.escape) {
+            if (_activeTool != LayoutTool.pointer) {
+              _setTool(LayoutTool.pointer);
+            } else {
+              setState(() => _selectedObjectId = null);
+            }
+          } else if (event.logicalKey == LogicalKeyboardKey.enter && _selectedObject?.hasEditableText == true) {
+            _startInlineEdit(_selectedObject!);
           } else if (event.logicalKey == LogicalKeyboardKey.keyD &&
               (HardwareKeyboard.instance.isMetaPressed || HardwareKeyboard.instance.isControlPressed)) {
             _duplicateSelectedObject();
@@ -1030,7 +1476,7 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
                       _toolItem(LayoutTool.button, Icons.smart_button, 'Button Tool'),
                       _toolItem(LayoutTool.popoverButton, Icons.open_in_new, 'Popover Button Tool'),
                       _toolItem(LayoutTool.buttonBar, Icons.view_column_outlined, 'Button Bar Tool'),
-                      _toolItem(LayoutTool.tabControl, Icons.tab_outlined, 'Tab Control Tool'),
+                      _toolItem(LayoutTool.tabOrder, Icons.keyboard_tab, 'Set Tab Order (Tab key sequence)'),
                       _toolItem(LayoutTool.portal, Icons.table_chart_outlined, 'Portal Tool'),
                       _toolItem(LayoutTool.chart, Icons.bar_chart, 'Chart Tool'),
                       _toolItem(LayoutTool.webViewer, Icons.language, 'Web Viewer Tool'),
@@ -1179,11 +1625,7 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
     return Tooltip(
       message: tooltip,
       child: InkWell(
-        onTap: () {
-          setState(() {
-            _activeTool = tool;
-          });
-        },
+        onTap: () => _setTool(tool),
         borderRadius: BorderRadius.circular(4),
         child: Container(
           width: 28,
@@ -1942,7 +2384,7 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
 
     final totalHeight = _headerPart.height + _bodyPart.height + _footerPart.height;
 
-    return MouseRegion(
+    final canvas = MouseRegion(
       cursor: cursorForTool,
       child: Container(
         color: isDark ? const Color(0xFF171A1E) : const Color(0xFFD6D6D8),
@@ -1951,7 +2393,7 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
           boundaryMargin: const EdgeInsets.all(120),
           minScale: 0.4,
           maxScale: 2.5,
-          panEnabled: _activeTool == LayoutTool.pointer && _selectedObjectId == null,
+          panEnabled: _activeTool == LayoutTool.pointer && _selectedObjectId == null && _editingTextObjectId == null,
           child: Padding(
             padding: const EdgeInsets.all(28.0),
             child: Row(
@@ -1973,6 +2415,11 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
                     return GestureDetector(
                       key: _canvasKey,
                       onTapDown: (details) {
+                        _canvasFocus.requestFocus();
+                        _commitInlineEdit();
+                        if (_isTabOrderMode) return;
+                        // Drawing tools create on tap-up (click) or on drag end.
+                        if (_isDrawingTool(_activeTool)) return;
                         if (_activeTool != LayoutTool.pointer &&
                             _activeTool != LayoutTool.format &&
                             _activeTool != LayoutTool.rotate) {
@@ -1981,6 +2428,14 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
                           setState(() => _selectedObjectId = null);
                         }
                       },
+                      onTapUp: (details) {
+                        if (_isDrawingTool(_activeTool)) _placeObjectFromTool(details.localPosition);
+                      },
+                      // Draw from the pointer-down point, not from where the drag slop was passed.
+                      dragStartBehavior: DragStartBehavior.down,
+                      onPanStart: _onCanvasPanStart,
+                      onPanUpdate: _onCanvasPanUpdate,
+                      onPanEnd: _onCanvasPanEnd,
                       child: Container(
                         width: _layout.width,
                         height: math.max(600.0, totalHeight),
@@ -2003,6 +2458,43 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
                             ..._buildPartDividers(),
                             // Layout Objects
                             ..._layout.objects.map((obj) => _buildCanvasObject(context, obj)),
+                            // Shape being drawn
+                            if (_drawRect != null)
+                              Positioned.fromRect(
+                                rect: _activeTool == LayoutTool.line
+                                    ? _lineBox(_drawRect!, _defaultStrokeWidth)
+                                    : _drawRect!,
+                                child: IgnorePointer(
+                                  child: Container(
+                                    decoration: _activeTool == LayoutTool.line
+                                        ? null
+                                        : ShapeDecoration(
+                                            color: const Color(0x141E88E5),
+                                            shape: _activeTool == LayoutTool.oval
+                                                ? const OvalBorder(side: BorderSide(color: Color(0xFF1E88E5)))
+                                                : RoundedRectangleBorder(
+                                                    side: const BorderSide(color: Color(0xFF1E88E5)),
+                                                    borderRadius: BorderRadius.circular(
+                                                        _activeTool == LayoutTool.roundedRect ? 8 : 0),
+                                                  ),
+                                          ),
+                                    child: _activeTool == LayoutTool.line
+                                        ? LayoutLineView(
+                                            obj: LayoutObjectModel(
+                                              id: '_draw',
+                                              type: 'line',
+                                              x: 0,
+                                              y: 0,
+                                              width: _drawRect!.width,
+                                              height: _drawRect!.height,
+                                              style: LayoutObjectStyle(borderWidth: _defaultStrokeWidth),
+                                            ),
+                                            colorOverride: const Color(0xFF1E88E5),
+                                          )
+                                        : null,
+                                  ),
+                                ),
+                              ),
                             // Live Drag Tooltip
                             if (_resizingPartType != null)
                               Positioned(
@@ -2038,6 +2530,57 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
             ),
           ),
         ),
+      ),
+    );
+
+    if (!_isTabOrderMode) return canvas;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _buildTabOrderBar(isDark),
+        Expanded(child: canvas),
+      ],
+    );
+  }
+
+  Widget _buildTabOrderBar(bool isDark) {
+    final stops = _tabStops.length;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      color: isDark ? const Color(0xFF263238) : const Color(0xFFFFF8E1),
+      child: Row(
+        children: [
+          const Icon(Icons.keyboard_tab, size: 16, color: Color(0xFFF57C00)),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              stops == 0
+                  ? 'Set Tab Order: this layout has no fields or buttons.'
+                  : 'Set Tab Order: click the $stops fields and buttons in the order the Tab key should visit them '
+                      'in Browse mode (${_tabSequence.length} of $stops set).',
+              style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600),
+            ),
+          ),
+          TextButton.icon(
+            icon: const Icon(Icons.auto_fix_high, size: 14),
+            label: const Text('Auto (reading order)', style: TextStyle(fontSize: 11)),
+            onPressed: stops == 0 ? null : _autoTabOrder,
+          ),
+          TextButton.icon(
+            icon: const Icon(Icons.clear_all, size: 14),
+            label: const Text('Clear', style: TextStyle(fontSize: 11)),
+            onPressed: stops == 0 ? null : _clearTabOrder,
+          ),
+          const SizedBox(width: 4),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+              minimumSize: const Size(0, 28),
+            ),
+            onPressed: () => _setTool(LayoutTool.pointer),
+            child: const Text('Done', style: TextStyle(fontSize: 11)),
+          ),
+        ],
       ),
     );
   }
@@ -2200,16 +2743,16 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
       height: obj.height,
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
-        onTap: () => setState(() => _selectedObjectId = obj.id),
+        onTap: () => _onObjectTap(obj),
         onPanStart: (details) {
-          if (_activeTool != LayoutTool.pointer) return;
+          if (_activeTool != LayoutTool.pointer || _editingTextObjectId == obj.id) return;
           _pushUndoState();
           _dragStart[obj.id] = details.globalPosition;
           _objStartPos[obj.id] = Offset(obj.x, obj.y);
           setState(() => _selectedObjectId = obj.id);
         },
         onPanUpdate: (details) {
-          if (_activeTool != LayoutTool.pointer) return;
+          if (_activeTool != LayoutTool.pointer || _editingTextObjectId == obj.id) return;
           final start = _dragStart[obj.id];
           final startPos = _objStartPos[obj.id];
           if (start == null || startPos == null) return;
@@ -2223,7 +2766,7 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
           });
         },
         onPanEnd: (_) {
-          _dragStart.remove(obj.id);
+          if (_dragStart.remove(obj.id) == null) return;
           _objStartPos.remove(obj.id);
           _markLayoutDirty();
         },
@@ -2231,15 +2774,121 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
           clipBehavior: Clip.none,
           children: [
             // Body of the Object
-            Positioned.fill(
-              child: Container(
-                decoration: _objectDecoration(obj, isSelected),
-                child: _buildObjectInner(obj),
+            Positioned.fill(child: _buildObjectBody(obj)),
+            // In-place text editor (double click / Enter)
+            if (_editingTextObjectId == obj.id) Positioned.fill(child: _buildInlineEditor(obj)),
+            // Selection outline (drawn over the object so its own line color stays visible)
+            if (isSelected && _editingTextObjectId != obj.id)
+              Positioned(
+                left: -2,
+                top: -2,
+                right: -2,
+                bottom: -2,
+                child: IgnorePointer(
+                  child: Container(
+                    decoration: BoxDecoration(
+                      border: Border.all(color: const Color(0xFF1E88E5), width: 1),
+                    ),
+                  ),
+                ),
               ),
-            ),
+            // Button action / media markers
+            if (obj.action != null && (obj.type == 'button' || obj.type == 'popover_button'))
+              Positioned(
+                right: 2,
+                top: 2,
+                child: IgnorePointer(
+                  child: Tooltip(
+                    message: _describeAction(obj.action!),
+                    child: const Icon(Icons.bolt, size: 12, color: Color(0xFFFFD54F)),
+                  ),
+                ),
+              ),
+            // Tab order badge
+            if (_isTabOrderMode && obj.isTabStop) _buildTabOrderBadge(obj),
             // 8 Resize Handles when selected
-            if (isSelected) ..._buildEightResizeHandles(obj),
+            if (isSelected && !_isTabOrderMode && _editingTextObjectId != obj.id) ..._buildEightResizeHandles(obj),
           ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildObjectBody(LayoutObjectModel obj) {
+    if (obj.isShape) {
+      return LayoutShapeView(obj: obj, text: _editingTextObjectId == obj.id ? '' : obj.text);
+    }
+    if (obj.type == 'line') return LayoutLineView(obj: obj);
+    if (obj.type == 'media') {
+      return Container(
+        decoration: _objectDecoration(obj, false),
+        child: obj.media != null ? LayoutMediaView(media: obj.media!) : _buildObjectInner(obj),
+      );
+    }
+    return Container(
+      decoration: _objectDecoration(obj, false),
+      child: _editingTextObjectId == obj.id ? null : _buildObjectInner(obj),
+    );
+  }
+
+  Widget _buildInlineEditor(LayoutObjectModel obj) {
+    final isLabel = obj.type == 'label';
+    return Material(
+      color: Colors.white,
+      elevation: 2,
+      child: CallbackShortcuts(
+        bindings: {
+          const SingleActivator(LogicalKeyboardKey.escape): _cancelInlineEdit,
+          const SingleActivator(LogicalKeyboardKey.enter, meta: true): _commitInlineEdit,
+          const SingleActivator(LogicalKeyboardKey.enter, control: true): _commitInlineEdit,
+          // Buttons hold a single line: Enter confirms.
+          if (!isLabel && !obj.isShape) const SingleActivator(LogicalKeyboardKey.enter): _commitInlineEdit,
+        },
+        child: TextField(
+          controller: _inlineTextCtrl,
+          focusNode: _inlineTextFocus,
+          maxLines: null,
+          expands: true,
+          textAlign: layoutTextAlign(obj.style.textAlign),
+          textAlignVertical: obj.isShape ? TextAlignVertical.center : TextAlignVertical.top,
+          style: layoutTextStyle(obj.style.copyWith(textColor: obj.type == 'button' ? '#000000' : null)),
+          decoration: const InputDecoration(
+            isDense: true,
+            contentPadding: EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+            border: OutlineInputBorder(borderSide: BorderSide(color: Color(0xFF1E88E5), width: 1.5)),
+            focusedBorder: OutlineInputBorder(borderSide: BorderSide(color: Color(0xFF1E88E5), width: 1.5)),
+          ),
+          onTapOutside: (_) => _commitInlineEdit(),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTabOrderBadge(LayoutObjectModel obj) {
+    final position = _orderedTabStops.indexWhere((o) => o.id == obj.id) + 1;
+    final explicit = obj.tabOrder != null;
+    final clicked = _tabSequence.contains(obj.id);
+    return Positioned(
+      left: -10,
+      top: -10,
+      child: IgnorePointer(
+        child: Container(
+          constraints: const BoxConstraints(minWidth: 22),
+          height: 22,
+          padding: const EdgeInsets.symmetric(horizontal: 5),
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: clicked
+                ? const Color(0xFFF57C00)
+                : explicit
+                    ? const Color(0xFF1E88E5)
+                    : Colors.grey.shade500,
+            borderRadius: BorderRadius.circular(11),
+            border: Border.all(color: Colors.white, width: 1.5),
+            boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 3)],
+          ),
+          child: Text('$position',
+              style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold)),
         ),
       ),
     );
@@ -2394,44 +3043,25 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
 
   BoxDecoration _objectDecoration(LayoutObjectModel obj, bool isSelected) {
     Color bg = Colors.transparent;
-    if (obj.style.fillColor != null &&
-        obj.style.fillColor!.startsWith('#') &&
-        obj.style.fillColor!.length >= 7) {
-      bg = Color(int.parse('0xFF${obj.style.fillColor!.replaceAll('#', '')}'));
+    final fill = parseLayoutColor(obj.style.fillColor);
+    if (fill != null) {
+      bg = fill;
     } else if (obj.type == 'button') {
       bg = const Color(0xFF1E88E5);
     } else if (obj.type == 'portal' || obj.type == 'tab_control' || obj.type == 'chart') {
       bg = const Color(0xFFFAFAFA);
     }
 
-    if (obj.type == 'oval') {
-      return BoxDecoration(
-        shape: BoxShape.circle,
-        color: bg,
-        border: Border.all(
-          color: isSelected ? const Color(0xFF1E88E5) : _parseBorderColor(obj),
-          width: isSelected ? 2.0 : obj.style.borderWidth,
-        ),
-      );
-    }
-
+    final borderColor = isSelected ? const Color(0xFF1E88E5) : _parseBorderColor(obj);
+    final borderWidth = isSelected ? 2.0 : obj.style.borderWidth;
     return BoxDecoration(
       color: bg,
       borderRadius: BorderRadius.circular(obj.style.cornerRadius),
-      border: Border.all(
-        color: isSelected ? const Color(0xFF1E88E5) : _parseBorderColor(obj),
-        width: isSelected ? 2.0 : obj.style.borderWidth,
-      ),
+      border: borderWidth <= 0 ? null : Border.all(color: borderColor, width: borderWidth),
     );
   }
 
-  Color _parseBorderColor(LayoutObjectModel obj) {
-    final bc = obj.style.borderColor;
-    if (bc != null && bc.startsWith('#') && bc.length >= 7) {
-      return Color(int.parse('0xFF${bc.replaceAll('#', '')}'));
-    }
-    return Colors.black26;
-  }
+  Color _parseBorderColor(LayoutObjectModel obj) => parseLayoutColor(obj.style.borderColor) ?? Colors.black26;
 
   Widget _buildObjectInner(LayoutObjectModel obj) {
     switch (obj.type) {
@@ -2442,14 +3072,9 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
             alignment: _getAlignment(obj.style.textAlign),
             child: Text(
               obj.text.isEmpty ? '(Label)' : obj.text,
-              style: TextStyle(
-                fontSize: obj.style.fontSize,
-                fontWeight: obj.style.fontWeight == 'bold' ? FontWeight.bold : FontWeight.normal,
-                color: obj.style.textColor != null && obj.style.textColor!.startsWith('#')
-                    ? Color(int.parse('0xFF${obj.style.textColor!.replaceAll('#', '')}'))
-                    : Colors.black87,
-              ),
-              overflow: TextOverflow.ellipsis,
+              textAlign: layoutTextAlign(obj.style.textAlign),
+              style: layoutTextStyle(obj.style),
+              overflow: TextOverflow.clip,
             ),
           ),
         );
@@ -2485,10 +3110,14 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
 
       case 'button':
         return Center(
-          child: Text(
-            obj.text.isEmpty ? 'Button' : obj.text,
-            style: const TextStyle(fontSize: 12, color: Colors.white, fontWeight: FontWeight.bold),
-            overflow: TextOverflow.ellipsis,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 6),
+            child: Text(
+              obj.text.isEmpty ? 'Button' : obj.text,
+              style: layoutTextStyle(obj.style, fallbackColor: Colors.white)
+                  .copyWith(fontWeight: obj.style.fontWeight == 'bold' ? FontWeight.bold : FontWeight.w600),
+              overflow: TextOverflow.ellipsis,
+            ),
           ),
         );
 
@@ -2616,13 +3245,8 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
           ),
         );
 
-      case 'line':
-        return CustomPaint(painter: _LinePainter(color: _parseBorderColor(obj)));
-
-      case 'rect':
-      case 'rounded_rect':
-      case 'oval':
-        return const SizedBox.shrink();
+      case 'media':
+        return const Center(child: Icon(Icons.image_not_supported_outlined, color: Colors.grey));
 
       default:
         return Center(child: Text(obj.type, style: const TextStyle(fontSize: 10)));
@@ -2801,25 +3425,25 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
         _inspectorSectionTitle('POSITION'),
         Row(
           children: [
-            _numField('Left (X)', sel.x, (v) => _updateSelected(sel.copyWith(x: v))),
+            _numField('Left (X)', sel.x, (v) => _editSelected((sel) => sel.copyWith(x: v))),
             const SizedBox(width: 8),
-            _numField('Top (Y)', sel.y, (v) => _updateSelected(sel.copyWith(y: v))),
+            _numField('Top (Y)', sel.y, (v) => _editSelected((sel) => sel.copyWith(y: v))),
           ],
         ),
         const SizedBox(height: 8),
         Row(
           children: [
-            _numField('Right', sel.x + sel.width, (v) => _updateSelected(sel.copyWith(width: math.max(10, v - sel.x)))),
+            _numField('Right', sel.x + sel.width, (v) => _editSelected((sel) => sel.copyWith(width: math.max(10, v - sel.x)))),
             const SizedBox(width: 8),
-            _numField('Bottom', sel.y + sel.height, (v) => _updateSelected(sel.copyWith(height: math.max(4, v - sel.y)))),
+            _numField('Bottom', sel.y + sel.height, (v) => _editSelected((sel) => sel.copyWith(height: math.max(4, v - sel.y)))),
           ],
         ),
         const SizedBox(height: 8),
         Row(
           children: [
-            _numField('Width', sel.width, (v) => _updateSelected(sel.copyWith(width: math.max(10, v)))),
+            _numField('Width', sel.width, (v) => _editSelected((sel) => sel.copyWith(width: math.max(10, v)))),
             const SizedBox(width: 8),
-            _numField('Height', sel.height, (v) => _updateSelected(sel.copyWith(height: math.max(4, v)))),
+            _numField('Height', sel.height, (v) => _editSelected((sel) => sel.copyWith(height: math.max(4, v)))),
           ],
         ),
 
@@ -2856,7 +3480,7 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
         onTap: () {
           final updated = Map<String, bool>.from(anchors);
           updated[key] = !isPinned;
-          _updateSelected(sel.copyWith(anchors: updated));
+          _editSelected((sel) => sel.copyWith(anchors: updated));
         },
         child: Container(
           width: 22,
@@ -2903,110 +3527,216 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
   }
 
   // Tab 1: Appearance & Styles
+  static const _palette = <String, String>{
+    '#FFFFFF': 'White',
+    '#F5F5F7': 'Light Grey',
+    '#9E9E9E': 'Grey',
+    '#616161': 'Dark Grey',
+    '#000000': 'Black',
+    '#1E88E5': 'Blue',
+    '#0D47A1': 'Navy',
+    '#00ACC1': 'Cyan',
+    '#2E7D32': 'Green',
+    '#F59E0B': 'Amber',
+    '#F57C00': 'Orange',
+    '#EF4444': 'Red',
+    '#8E24AA': 'Purple',
+    '#21262D': 'Dark',
+  };
+
   Widget _buildAppearanceTab(LayoutObjectModel sel, bool isDark) {
+    final isLine = sel.type == 'line';
+    final hasCorners = sel.type != 'oval' && sel.type != 'line' && sel.type != 'rect';
+    final canHoldMedia = sel.isShape || sel.type == 'media';
+
     return ListView(
       padding: const EdgeInsets.all(12),
       children: [
-        _inspectorSectionTitle('FILL COLOR'),
+        if (!isLine) ...[
+          _inspectorSectionTitle('FILL COLOR'),
+          _colorPicker(
+            key: 'fill',
+            sel: sel,
+            current: sel.style.fillColor,
+            allowNone: true,
+            onPick: (c) => _editSelected((sel) => sel.copyWith(
+              style: c == null ? sel.style.copyWith(clearFillColor: true) : sel.style.copyWith(fillColor: c),
+            )),
+          ),
+          const Divider(height: 24),
+        ],
+        _inspectorSectionTitle(isLine ? 'LINE COLOR' : 'LINE (BORDER) COLOR'),
+        _colorPicker(
+          key: 'border',
+          sel: sel,
+          current: sel.style.borderColor,
+          allowNone: !isLine,
+          onPick: (c) => _editSelected((sel) => sel.copyWith(
+            style: c == null ? sel.style.copyWith(clearBorderColor: true) : sel.style.copyWith(borderColor: c),
+          )),
+        ),
+        const SizedBox(height: 12),
+        _inspectorSectionTitle(isLine ? 'LINE WIDTH' : 'LINE WIDTH & CORNERS'),
+        Row(
+          children: [
+            Expanded(
+              child: Slider(
+                value: sel.style.borderWidth.clamp(0.0, 12.0),
+                min: 0,
+                max: 12,
+                divisions: 24,
+                label: '${sel.style.borderWidth} pt',
+                onChanged: (v) => _editSelected((sel) => sel.copyWith(style: sel.style.copyWith(borderWidth: v))),
+              ),
+            ),
+            SizedBox(
+              width: 44,
+              child: Text('${sel.style.borderWidth.toStringAsFixed(1)} pt', style: const TextStyle(fontSize: 11)),
+            ),
+          ],
+        ),
+        if (hasCorners)
+          Row(
+            children: [
+              _numField('Corner radius', sel.style.cornerRadius, (v) {
+                _editSelected((sel) => sel.copyWith(style: sel.style.copyWith(cornerRadius: math.max(0, v))));
+              }, objectId: sel.id),
+            ],
+          ),
+        if (canHoldMedia) ...[
+          const Divider(height: 24),
+          _inspectorSectionTitle('PICTURE / CONTENT'),
+          if (sel.media == null)
+            const Text('Nothing inserted. Use Insert > Picture, PDF, Audio/Video or File with this object selected.',
+                style: TextStyle(fontSize: 11, color: Colors.grey))
+          else ...[
+            Row(
+              children: [
+                Icon(switch (sel.media!.kind) {
+                  'image' => Icons.image_outlined,
+                  'pdf' => Icons.picture_as_pdf_outlined,
+                  'video' => Icons.movie_outlined,
+                  'audio' => Icons.audiotrack_outlined,
+                  _ => Icons.insert_drive_file_outlined,
+                }, size: 16, color: Colors.blueGrey),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(sel.media!.name, style: const TextStyle(fontSize: 11), overflow: TextOverflow.ellipsis),
+                ),
+                IconButton(
+                  tooltip: 'Remove',
+                  icon: const Icon(Icons.delete_outline, size: 16, color: Colors.red),
+                  onPressed: () {
+                    _pushUndoState();
+                    _editSelected((sel) => sel.copyWith(clearMedia: true));
+                  },
+                ),
+              ],
+            ),
+            if (sel.media!.isImage)
+              DropdownButtonFormField<String>(
+                value: sel.media!.fit,
+                decoration: const InputDecoration(labelText: 'Fit', border: OutlineInputBorder(), isDense: true),
+                items: const [
+                  DropdownMenuItem(value: 'contain', child: Text('Fit inside (keep proportions)', style: TextStyle(fontSize: 11))),
+                  DropdownMenuItem(value: 'cover', child: Text('Fill and crop', style: TextStyle(fontSize: 11))),
+                  DropdownMenuItem(value: 'fill', child: Text('Stretch', style: TextStyle(fontSize: 11))),
+                ],
+                onChanged: (v) {
+                  if (v != null) _editSelected((sel) => sel.copyWith(media: sel.media!.copyWith(fit: v)));
+                },
+              ),
+          ],
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              _actionBtn(Icons.image_outlined, 'Picture...', () => insertMedia('image')),
+              _actionBtn(Icons.picture_as_pdf_outlined, 'PDF...', () => insertMedia('pdf')),
+              _actionBtn(Icons.movie_outlined, 'Audio/Video...', () => insertMedia('video')),
+              _actionBtn(Icons.attach_file, 'File...', () => insertMedia('file')),
+            ],
+          ),
+        ],
+      ],
+    );
+  }
+
+  /// Color swatches plus a hex field. [onPick] receives `#RRGGBB`, or null
+  /// for "none" when [allowNone] is set.
+  Widget _colorPicker({
+    required String key,
+    required LayoutObjectModel sel,
+    required String? current,
+    required ValueChanged<String?> onPick,
+    bool allowNone = false,
+  }) {
+    final normalized = current == null ? null : normalizeLayoutColor(current);
+    Widget swatch(String? hex, String tooltip) {
+      final isSelected = normalized == hex;
+      return Tooltip(
+        message: tooltip,
+        child: InkWell(
+          onTap: () => onPick(hex),
+          customBorder: const CircleBorder(),
+          child: Container(
+            width: 22,
+            height: 22,
+            decoration: BoxDecoration(
+              color: hex != null ? parseLayoutColor(hex) : Colors.transparent,
+              shape: BoxShape.circle,
+              border: Border.all(
+                color: isSelected ? const Color(0xFF1E88E5) : Colors.black26,
+                width: isSelected ? 2.5 : 1,
+              ),
+            ),
+            child: hex == null ? const Icon(Icons.block, size: 13, color: Colors.red) : null,
+          ),
+        ),
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
         Wrap(
           spacing: 6,
           runSpacing: 6,
           children: [
-            _colorSwatch(sel, null, 'None / Transparent'),
-            _colorSwatch(sel, '#FFFFFF', 'White'),
-            _colorSwatch(sel, '#F5F5F7', 'Light Grey'),
-            _colorSwatch(sel, '#1E88E5', 'Blue'),
-            _colorSwatch(sel, '#0D47A1', 'Navy'),
-            _colorSwatch(sel, '#2E7D32', 'Green'),
-            _colorSwatch(sel, '#F59E0B', 'Amber'),
-            _colorSwatch(sel, '#EF4444', 'Red'),
-            _colorSwatch(sel, '#21262D', 'Dark'),
+            if (allowNone) swatch(null, 'None / Transparent'),
+            for (final e in _palette.entries) swatch(e.key, e.value),
           ],
         ),
-        const SizedBox(height: 12),
-        Row(
-          children: [
-            const Text('Hex:', style: TextStyle(fontSize: 11)),
-            const SizedBox(width: 8),
-            Expanded(
-              child: TextField(
-                controller: TextEditingController(text: sel.style.fillColor ?? ''),
-                decoration: const InputDecoration(hintText: '#FFFFFF', isDense: true, border: OutlineInputBorder()),
-                onSubmitted: (v) => _updateSelected(
-                  sel.copyWith(style: sel.style.copyWith(fillColor: v.trim().isEmpty ? null : v.trim())),
-                ),
-              ),
-            ),
-          ],
-        ),
-
-        const Divider(height: 24),
-        _inspectorSectionTitle('BORDER & CORNERS'),
-        Row(
-          children: [
-            _numField('Width', sel.style.borderWidth, (v) {
-              _updateSelected(sel.copyWith(style: sel.style.copyWith(borderWidth: v)));
-            }),
-            const SizedBox(width: 8),
-            _numField('Radius', sel.style.cornerRadius, (v) {
-              _updateSelected(sel.copyWith(style: sel.style.copyWith(cornerRadius: v)));
-            }),
-          ],
-        ),
-        const SizedBox(height: 10),
-        Row(
-          children: [
-            const Text('Border Color:', style: TextStyle(fontSize: 11)),
-            const SizedBox(width: 8),
-            Expanded(
-              child: TextField(
-                controller: TextEditingController(text: sel.style.borderColor ?? ''),
-                decoration: const InputDecoration(hintText: '#9E9E9E', isDense: true, border: OutlineInputBorder()),
-                onSubmitted: (v) => _updateSelected(
-                  sel.copyWith(style: sel.style.copyWith(borderColor: v.trim().isEmpty ? null : v.trim())),
-                ),
-              ),
-            ),
-          ],
+        const SizedBox(height: 8),
+        _InspectorTextField(
+          key: ValueKey('${sel.id}-$key-hex'),
+          value: current ?? '',
+          label: 'Hex (#RRGGBB)',
+          onSubmitted: (v) {
+            if (v.trim().isEmpty) {
+              if (allowNone) onPick(null);
+              return;
+            }
+            final c = normalizeLayoutColor(v);
+            if (c != null) {
+              onPick(c);
+            } else {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text('"$v" is not a color. Use #RRGGBB, e.g. #1E88E5.')),
+              );
+            }
+          },
         ),
       ],
     );
   }
 
-  Widget _colorSwatch(LayoutObjectModel sel, String? hexColor, String tooltip) {
-    final isSelected = sel.style.fillColor == hexColor;
-    return Tooltip(
-      message: tooltip,
-      child: InkWell(
-        onTap: () {
-          _updateSelected(sel.copyWith(style: sel.style.copyWith(fillColor: hexColor)));
-        },
-        child: Container(
-          width: 24,
-          height: 24,
-          decoration: BoxDecoration(
-            color: hexColor != null ? Color(int.parse('0xFF${hexColor.replaceAll('#', '')}')) : Colors.transparent,
-            shape: BoxShape.circle,
-            border: Border.all(
-              color: isSelected ? const Color(0xFF1E88E5) : Colors.black26,
-              width: isSelected ? 2.5 : 1,
-            ),
-          ),
-          child: hexColor == null
-              ? const Icon(Icons.block, size: 14, color: Colors.red)
-              : null,
-        ),
-      ),
-    );
-  }
-
-  // Tab 2: Data Binding
-  Widget _buildDataTab(LayoutObjectModel sel, bool isDark) {
+  // Tab 2: Data — field binding (fields), action (buttons), tab order (tab stops)
+  List<Widget> _fieldBindingSection(LayoutObjectModel sel, bool isDark) {
     final cols = _currentTable.columns;
 
-    return ListView(
-      padding: const EdgeInsets.all(12),
-      children: [
+    return [
         _inspectorSectionTitle('FIELD BINDING'),
         const Text('Table Occurrence:', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
         const SizedBox(height: 4),
@@ -3035,7 +3765,7 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
           onChanged: (f) {
             if (f != null) {
               final existing = sel.fieldBinding ?? const FieldBindingModel(fieldName: '');
-              _updateSelected(sel.copyWith(
+              _editSelected((sel) => sel.copyWith(
                 fieldBinding: FieldBindingModel(
                   tableOccurrence: _currentTable.name,
                   fieldName: f,
@@ -3063,7 +3793,7 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
           ],
           onChanged: (style) {
             if (style != null && sel.fieldBinding != null) {
-              _updateSelected(sel.copyWith(
+              _editSelected((sel) => sel.copyWith(
                 fieldBinding: FieldBindingModel(
                   tableOccurrence: sel.fieldBinding!.tableOccurrence,
                   fieldName: sel.fieldBinding!.fieldName,
@@ -3085,7 +3815,7 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
           contentPadding: EdgeInsets.zero,
           onChanged: (v) {
             if (sel.fieldBinding != null) {
-              _updateSelected(sel.copyWith(
+              _editSelected((sel) => sel.copyWith(
                 fieldBinding: FieldBindingModel(
                   tableOccurrence: sel.fieldBinding!.tableOccurrence,
                   fieldName: sel.fieldBinding!.fieldName,
@@ -3104,7 +3834,7 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
           contentPadding: EdgeInsets.zero,
           onChanged: (v) {
             if (sel.fieldBinding != null) {
-              _updateSelected(sel.copyWith(
+              _editSelected((sel) => sel.copyWith(
                 fieldBinding: FieldBindingModel(
                   tableOccurrence: sel.fieldBinding!.tableOccurrence,
                   fieldName: sel.fieldBinding!.fieldName,
@@ -3116,8 +3846,292 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
             }
           },
         ),
+    ];
+  }
+
+  Widget _buildDataTab(LayoutObjectModel sel, bool isDark) {
+    final isButton = sel.type == 'button' || sel.type == 'popover_button';
+    return ListView(
+      padding: const EdgeInsets.all(12),
+      children: [
+        if (sel.type == 'field') ..._fieldBindingSection(sel, isDark),
+        if (isButton) ..._buttonActionSection(sel, isDark),
+        if (sel.isTabStop) ...[
+          const Divider(height: 24),
+          _inspectorSectionTitle('TAB ORDER'),
+          Row(
+            children: [
+              _numField('Tab order', (sel.tabOrder ?? 0).toDouble(), (v) {
+                _pushUndoState();
+                _updateSelected(v < 1 ? sel.copyWith(clearTabOrder: true) : sel.copyWith(tabOrder: v.round()));
+              }, objectId: sel.id),
+              const SizedBox(width: 6),
+              Tooltip(
+                message: 'Set the whole sequence by clicking objects',
+                child: IconButton(
+                  icon: const Icon(Icons.keyboard_tab, size: 18, color: Color(0xFF1E88E5)),
+                  onPressed: () => _setTool(LayoutTool.tabOrder),
+                ),
+              ),
+            ],
+          ),
+          Text(
+            sel.tabOrder == null
+                ? 'Not set: visited in reading order after the numbered objects. 0 clears it.'
+                : 'Position ${_orderedTabStops.indexWhere((o) => o.id == sel.id) + 1} of ${_tabStops.length} in the Tab key sequence. 0 clears it.',
+            style: const TextStyle(fontSize: 10, color: Colors.grey),
+          ),
+        ],
+        if (!isButton && sel.type != 'field')
+          const Padding(
+            padding: EdgeInsets.only(top: 8),
+            child: Text('This object has no data binding or action.', style: TextStyle(fontSize: 11, color: Colors.grey)),
+          ),
       ],
     );
+  }
+
+  /// Steps a button can run directly (single step action). Parameters use the
+  /// same names as the Script Workspace steps.
+  static const _buttonSteps = <String, String>{
+    'new_record': 'New Record',
+    'duplicate_record': 'Duplicate Record',
+    'delete_record': 'Delete Record',
+    'commit_records': 'Commit (Save) Record',
+    'revert_record': 'Revert Record',
+    'go_to_record': 'Go to Record',
+    'enter_find_mode': 'Enter Find Mode',
+    'perform_find': 'Perform Find',
+    'show_all_records': 'Show All Records',
+    'enter_preview_mode': 'Enter Preview Mode',
+    'go_to_layout': 'Go to Layout',
+    'set_field': 'Set Field',
+    'show_dialog': 'Show Custom Dialog',
+    'open_url': 'Open URL',
+  };
+
+  String _describeAction(ButtonActionModel a) {
+    if (a.isPerformScript) {
+      final p = a.parameter?.isNotEmpty == true ? ' ("${a.parameter}")' : '';
+      return 'Perform Script: ${a.scriptName ?? a.scriptId ?? '?'}$p';
+    }
+    final label = _buttonSteps[a.stepType] ?? a.stepType ?? '?';
+    final detail = switch (a.stepType) {
+      'go_to_record' => ' [${a.params['target'] ?? 'next'}]',
+      'go_to_layout' => ' [${a.params['layout_name'] ?? ''}]',
+      'set_field' => ' [${a.params['field'] ?? ''}]',
+      'open_url' => ' [${a.params['url'] ?? ''}]',
+      _ => '',
+    };
+    return '$label$detail';
+  }
+
+  List<Widget> _buttonActionSection(LayoutObjectModel sel, bool isDark) {
+    final action = sel.action;
+    final kind = action == null ? 'none' : (action.isPerformScript ? 'perform_script' : 'single_step');
+
+    void setAction(ButtonActionModel? a) {
+      _pushUndoState();
+      _updateSelected(a == null ? sel.copyWith(clearAction: true) : sel.copyWith(action: a));
+    }
+
+    void setParam(String key, String value) {
+      final params = Map<String, dynamic>.from(action?.params ?? const {});
+      params[key] = value;
+      setAction(ButtonActionModel.singleStep(action!.stepType!, params: params));
+    }
+
+    if (kind == 'perform_script') _loadScripts();
+    final scripts = _scripts ?? const <ScriptModel>[];
+
+    return [
+      _inspectorSectionTitle('BUTTON ACTION'),
+      const Text('What a click runs in Browse mode.', style: TextStyle(fontSize: 10, color: Colors.grey)),
+      const SizedBox(height: 8),
+      DropdownButtonFormField<String>(
+        key: ValueKey('${sel.id}-action-kind'),
+        value: kind,
+        decoration: const InputDecoration(labelText: 'Action', border: OutlineInputBorder(), isDense: true),
+        items: const [
+          DropdownMenuItem(value: 'none', child: Text('Do nothing', style: TextStyle(fontSize: 11))),
+          DropdownMenuItem(value: 'single_step', child: Text('Single step', style: TextStyle(fontSize: 11))),
+          DropdownMenuItem(value: 'perform_script', child: Text('Perform Script', style: TextStyle(fontSize: 11))),
+        ],
+        onChanged: (v) {
+          if (v == null || v == kind) return;
+          switch (v) {
+            case 'none':
+              setAction(null);
+            case 'single_step':
+              setAction(const ButtonActionModel.singleStep('new_record'));
+            case 'perform_script':
+              _loadScripts();
+              setAction(const ButtonActionModel(type: 'perform_script'));
+          }
+        },
+      ),
+      const SizedBox(height: 10),
+      if (kind == 'single_step') ...[
+        DropdownButtonFormField<String>(
+          key: ValueKey('${sel.id}-action-step'),
+          value: _buttonSteps.containsKey(action!.stepType) ? action.stepType : null,
+          isExpanded: true,
+          decoration: const InputDecoration(labelText: 'Step', border: OutlineInputBorder(), isDense: true),
+          items: _buttonSteps.entries
+              .map((e) => DropdownMenuItem(value: e.key, child: Text(e.value, style: const TextStyle(fontSize: 11))))
+              .toList(),
+          onChanged: (v) {
+            if (v == null) return;
+            final defaults = <String, dynamic>{
+              'go_to_record': {'target': 'next'},
+              'show_dialog': {'title': 'Message', 'message': ''},
+              'set_field': {'field': '', 'value': ''},
+              'go_to_layout': {'layout_name': ''},
+              'open_url': {'url': 'https://'},
+            };
+            setAction(ButtonActionModel.singleStep(v,
+                params: Map<String, dynamic>.from(defaults[v] as Map? ?? const {})));
+          },
+        ),
+        const SizedBox(height: 8),
+        ..._stepParamFields(sel, action, setParam),
+      ],
+      if (kind == 'perform_script') ...[
+        if (_loadingScripts)
+          const Padding(padding: EdgeInsets.all(8), child: LinearProgressIndicator())
+        else
+          DropdownButtonFormField<String>(
+            key: ValueKey('${sel.id}-action-script-${scripts.length}'),
+            value: scripts.any((sc) => sc.id == action!.scriptId) ? action!.scriptId : null,
+            isExpanded: true,
+            decoration: InputDecoration(
+              labelText: 'Script',
+              border: const OutlineInputBorder(),
+              isDense: true,
+              helperText: scripts.isEmpty ? 'No scripts yet. Create one in the Script Workspace.' : null,
+              helperStyle: const TextStyle(fontSize: 10),
+            ),
+            items: scripts
+                .map((sc) => DropdownMenuItem(value: sc.id, child: Text(sc.name, style: const TextStyle(fontSize: 11))))
+                .toList(),
+            onChanged: (id) {
+              final sc = scripts.where((x) => x.id == id).firstOrNull;
+              if (sc != null) {
+                setAction(ButtonActionModel.performScript(id: sc.id, name: sc.name, parameter: action!.parameter));
+              }
+            },
+          ),
+        const SizedBox(height: 8),
+        _InspectorTextField(
+          key: ValueKey('${sel.id}-action-param'),
+          value: action!.parameter ?? '',
+          label: 'Script parameter (optional)',
+          onSubmitted: (v) => setAction(ButtonActionModel(
+            type: 'perform_script',
+            scriptId: action.scriptId,
+            scriptName: action.scriptName,
+            parameter: v.trim().isEmpty ? null : v.trim(),
+          )),
+        ),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 6,
+          children: [
+            _actionBtn(Icons.code, 'Script Workspace...', () async {
+              widget.onManageScripts?.call();
+            }),
+            _actionBtn(Icons.refresh, 'Reload scripts', () => _loadScripts(force: true)),
+          ],
+        ),
+      ],
+      if (action != null && (kind != 'perform_script' || action.scriptId != null))
+        Padding(
+          padding: const EdgeInsets.only(top: 10),
+          child: Row(
+            children: [
+              const Icon(Icons.bolt, size: 14, color: Color(0xFFF59E0B)),
+              const SizedBox(width: 4),
+              Expanded(
+                child: Text(_describeAction(action),
+                    style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600)),
+              ),
+            ],
+          ),
+        ),
+    ];
+  }
+
+  List<Widget> _stepParamFields(
+      LayoutObjectModel sel, ButtonActionModel action, void Function(String key, String value) setParam) {
+    String p(String key) => action.params[key]?.toString() ?? '';
+    Widget text(String key, String label) => Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: _InspectorTextField(
+            key: ValueKey('${sel.id}-param-${action.stepType}-$key'),
+            value: p(key),
+            label: label,
+            onSubmitted: (v) => setParam(key, v),
+          ),
+        );
+
+    switch (action.stepType) {
+      case 'go_to_record':
+        const targets = {'first': 'First', 'previous': 'Previous', 'next': 'Next', 'last': 'Last'};
+        final current = p('target').toLowerCase();
+        return [
+          DropdownButtonFormField<String>(
+            key: ValueKey('${sel.id}-param-target'),
+            value: targets.containsKey(current) ? current : 'next',
+            decoration: const InputDecoration(labelText: 'Record', border: OutlineInputBorder(), isDense: true),
+            items: targets.entries
+                .map((e) => DropdownMenuItem(value: e.key, child: Text(e.value, style: const TextStyle(fontSize: 11))))
+                .toList(),
+            onChanged: (v) {
+              if (v != null) setParam('target', v);
+            },
+          ),
+        ];
+      case 'go_to_layout':
+        final names = widget.layouts.map((l) => l.name).toList();
+        return [
+          DropdownButtonFormField<String>(
+            key: ValueKey('${sel.id}-param-layout'),
+            value: names.contains(p('layout_name')) ? p('layout_name') : null,
+            isExpanded: true,
+            decoration: const InputDecoration(labelText: 'Layout', border: OutlineInputBorder(), isDense: true),
+            items: names
+                .map((n) => DropdownMenuItem(value: n, child: Text(n, style: const TextStyle(fontSize: 11))))
+                .toList(),
+            onChanged: (v) {
+              if (v != null) setParam('layout_name', v);
+            },
+          ),
+        ];
+      case 'set_field':
+        final cols = _currentTable.columns.where((c) => !c.isPrimaryKey).toList();
+        return [
+          DropdownButtonFormField<String>(
+            key: ValueKey('${sel.id}-param-field'),
+            value: cols.any((c) => c.name == p('field')) ? p('field') : null,
+            isExpanded: true,
+            decoration: const InputDecoration(labelText: 'Field', border: OutlineInputBorder(), isDense: true),
+            items: cols
+                .map((c) => DropdownMenuItem(value: c.name, child: Text(c.displayName, style: const TextStyle(fontSize: 11))))
+                .toList(),
+            onChanged: (v) {
+              if (v != null) setParam('field', v);
+            },
+          ),
+          const SizedBox(height: 8),
+          text('value', 'Value (text, {{field}} or {{CurrentDate}})'),
+        ];
+      case 'show_dialog':
+        return [text('title', 'Title'), text('message', 'Message')];
+      case 'open_url':
+        return [text('url', 'URL')];
+      default:
+        return const [];
+    }
   }
 
   // Tab 3: Typography & Text
@@ -3125,29 +4139,61 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
     return ListView(
       padding: const EdgeInsets.all(12),
       children: [
-        _inspectorSectionTitle('LABEL / TEXT CONTENT'),
-        TextField(
-          controller: TextEditingController(text: sel.text),
-          decoration: const InputDecoration(labelText: 'Display Text', isDense: true, border: OutlineInputBorder()),
-          onChanged: (v) => _updateSelected(sel.copyWith(text: v)),
-        ),
+        _inspectorSectionTitle('TEXT CONTENT'),
+        if (sel.hasEditableText) ...[
+          _InspectorTextField(
+            key: ValueKey('${sel.id}-text'),
+            value: sel.text,
+            label: 'Text',
+            multiline: sel.type != 'button' && sel.type != 'popover_button',
+            onChanged: (v) => _editSelected((sel) => sel.copyWith(text: v)),
+          ),
+          const SizedBox(height: 6),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              _actionBtn(Icons.edit, 'Edit on canvas', () => _startInlineEdit(sel)),
+              _actionBtn(Icons.data_object, 'Merge field...', insertMergeField),
+              _actionBtn(Icons.today, 'Date', () => insertText(LayoutMergeSymbols.currentDate)),
+              _actionBtn(Icons.person_outline, 'User', () => insertText(LayoutMergeSymbols.currentUser)),
+            ],
+          ),
+          const SizedBox(height: 4),
+          const Text('Double click the object (or press Enter) to type directly on the canvas. '
+              '{{field}} symbols show the record value in Browse mode.',
+              style: TextStyle(fontSize: 10, color: Colors.grey)),
+        ] else
+          const Text('This object has no text of its own.', style: TextStyle(fontSize: 11, color: Colors.grey)),
 
         const Divider(height: 24),
         _inspectorSectionTitle('FONT & SIZE'),
         Row(
           children: [
             _numField('Font Size (pt)', sel.style.fontSize, (v) {
-              _updateSelected(sel.copyWith(style: sel.style.copyWith(fontSize: v.clamp(6.0, 72.0))));
-            }),
+              _editSelected((sel) => sel.copyWith(style: sel.style.copyWith(fontSize: v.clamp(6.0, 72.0))));
+            }, objectId: sel.id),
             const SizedBox(width: 8),
             ChoiceChip(
               label: const Text('Bold', style: TextStyle(fontSize: 11)),
               selected: sel.style.fontWeight == 'bold',
               onSelected: (b) {
-                _updateSelected(sel.copyWith(style: sel.style.copyWith(fontWeight: b ? 'bold' : 'normal')));
+                _editSelected((sel) => sel.copyWith(style: sel.style.copyWith(fontWeight: b ? 'bold' : 'normal')));
               },
             ),
           ],
+        ),
+
+        const SizedBox(height: 12),
+        _inspectorSectionTitle('TEXT COLOR'),
+        _colorPicker(
+          key: 'text',
+          sel: sel,
+          current: sel.style.textColor,
+          allowNone: true,
+          onPick: (c) => _editSelected((sel) => sel.copyWith(
+            style: c == null ? sel.style.copyWith(clearTextColor: true) : sel.style.copyWith(textColor: c),
+          )),
         ),
 
         const SizedBox(height: 12),
@@ -3169,7 +4215,7 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
     return Expanded(
       child: IconButton(
         icon: Icon(icon, color: isSel ? const Color(0xFF1E88E5) : Colors.grey, size: 18),
-        onPressed: () => _updateSelected(sel.copyWith(style: sel.style.copyWith(textAlign: align))),
+        onPressed: () => _editSelected((sel) => sel.copyWith(style: sel.style.copyWith(textAlign: align))),
       ),
     );
   }
@@ -3182,14 +4228,16 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
         ),
       );
 
-  Widget _numField(String label, double value, ValueChanged<double> onChanged) {
+  Widget _numField(String label, double value, ValueChanged<double> onChanged, {String? objectId}) {
+    final shown = value == value.roundToDouble() ? value.round().toString() : value.toStringAsFixed(1);
     return Expanded(
-      child: TextField(
-        decoration: InputDecoration(labelText: label, isDense: true, border: const OutlineInputBorder()),
-        keyboardType: TextInputType.number,
-        controller: TextEditingController(text: value.round().toString()),
+      child: _InspectorTextField(
+        key: ValueKey('${objectId ?? _selectedObjectId}-num-$label'),
+        value: shown,
+        label: label,
+        numeric: true,
         onSubmitted: (val) {
-          final n = double.tryParse(val);
+          final n = double.tryParse(val.replaceAll(',', '.'));
           if (n != null) onChanged(n);
         },
       ),
@@ -3206,6 +4254,16 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
       ),
       onPressed: onPressed,
     );
+  }
+
+  /// Applies [change] to the current version of the selected object. Using
+  /// the current version (not the one captured when the inspector was built)
+  /// keeps quick consecutive edits, e.g. a color then a width, from undoing
+  /// each other.
+  void _editSelected(LayoutObjectModel Function(LayoutObjectModel current) change) {
+    final current = _selectedObject;
+    if (current == null) return;
+    _updateSelected(change(current));
   }
 
   void _updateSelected(LayoutObjectModel updated) {
@@ -3256,32 +4314,6 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
   }
 }
 
-// ─── Extension for LayoutObjectStyle copyWith ─────────────────────────────────
-
-extension LayoutObjectStyleExtension on LayoutObjectStyle {
-  LayoutObjectStyle copyWith({
-    String? fillColor,
-    String? borderColor,
-    double? borderWidth,
-    double? cornerRadius,
-    double? fontSize,
-    String? fontWeight,
-    String? textColor,
-    String? textAlign,
-  }) {
-    return LayoutObjectStyle(
-      fillColor: fillColor ?? this.fillColor,
-      borderColor: borderColor ?? this.borderColor,
-      borderWidth: borderWidth ?? this.borderWidth,
-      cornerRadius: cornerRadius ?? this.cornerRadius,
-      fontSize: fontSize ?? this.fontSize,
-      fontWeight: fontWeight ?? this.fontWeight,
-      textColor: textColor ?? this.textColor,
-      textAlign: textAlign ?? this.textAlign,
-    );
-  }
-}
-
 // ─── Grid Painter ─────────────────────────────────────────────────────────────
 
 class _GridPainter extends CustomPainter {
@@ -3306,23 +4338,73 @@ class _GridPainter extends CustomPainter {
   bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
 
-// ─── Line Painter ─────────────────────────────────────────────────────────────
+// ─── Inspector text field ─────────────────────────────────────────────────────
 
-class _LinePainter extends CustomPainter {
-  final Color color;
-  const _LinePainter({required this.color});
+/// Text field for the inspector that owns its controller, so rebuilding the
+/// inspector (auto-save, selection changes) neither loses what is being typed
+/// nor moves the cursor. External changes to [value] are shown while the
+/// field is not being edited. [onSubmitted] also runs when focus leaves.
+class _InspectorTextField extends StatefulWidget {
+  final String value;
+  final String label;
+  final bool multiline;
+  final bool numeric;
+  final ValueChanged<String>? onChanged;
+  final ValueChanged<String>? onSubmitted;
+
+  const _InspectorTextField({
+    super.key,
+    required this.value,
+    required this.label,
+    this.multiline = false,
+    this.numeric = false,
+    this.onChanged,
+    this.onSubmitted,
+  });
 
   @override
-  void paint(Canvas canvas, Size size) {
-    canvas.drawLine(
-      Offset(0, size.height / 2),
-      Offset(size.width, size.height / 2),
-      Paint()
-        ..color = color
-        ..strokeWidth = 2,
-    );
+  State<_InspectorTextField> createState() => _InspectorTextFieldState();
+}
+
+class _InspectorTextFieldState extends State<_InspectorTextField> {
+  late final TextEditingController _ctrl = TextEditingController(text: widget.value);
+  final FocusNode _focus = FocusNode();
+
+  @override
+  void initState() {
+    super.initState();
+    _focus.addListener(() {
+      if (!_focus.hasFocus && _ctrl.text != widget.value) widget.onSubmitted?.call(_ctrl.text);
+    });
   }
 
   @override
-  bool shouldRepaint(covariant _LinePainter old) => old.color != color;
+  void didUpdateWidget(covariant _InspectorTextField old) {
+    super.didUpdateWidget(old);
+    if (!_focus.hasFocus && widget.value != _ctrl.text) _ctrl.text = widget.value;
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    _focus.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return TextField(
+      controller: _ctrl,
+      focusNode: _focus,
+      keyboardType: widget.numeric
+          ? const TextInputType.numberWithOptions(decimal: true)
+          : (widget.multiline ? TextInputType.multiline : TextInputType.text),
+      minLines: widget.multiline ? 2 : 1,
+      maxLines: widget.multiline ? 6 : 1,
+      style: const TextStyle(fontSize: 12),
+      decoration: InputDecoration(labelText: widget.label, isDense: true, border: const OutlineInputBorder()),
+      onChanged: widget.onChanged,
+      onSubmitted: widget.onSubmitted,
+    );
+  }
 }

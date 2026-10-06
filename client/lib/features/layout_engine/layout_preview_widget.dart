@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../../core/api/api_client.dart';
 import '../../core/models/page_setup_model.dart';
 import '../../core/services/solution_storage.dart';
+import 'layout_object_visuals.dart';
 import 'models/layout_definition.dart';
 
 class LayoutPreviewWidget extends StatefulWidget {
@@ -10,6 +11,7 @@ class LayoutPreviewWidget extends StatefulWidget {
   final LayoutDefinitionModel layout;
   final PageSetupModel pageSetup;
   final VoidCallback? onPageSetup;
+  final String? currentUserName;
 
   const LayoutPreviewWidget({
     super.key,
@@ -18,6 +20,7 @@ class LayoutPreviewWidget extends StatefulWidget {
     required this.layout,
     this.pageSetup = const PageSetupModel(),
     this.onPageSetup,
+    this.currentUserName,
   });
 
   @override
@@ -248,7 +251,8 @@ class _LayoutPreviewWidgetState extends State<LayoutPreviewWidget> {
           alignment: _parseAlignment(obj.style.textAlign),
           padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
           child: Text(
-            obj.text,
+            resolveLayoutMergeText(obj.text,
+                record: record, userName: widget.currentUserName, pageNumber: _currentRecordIndex + 1),
             textAlign: _parseTextAlign(obj.style.textAlign),
             style: TextStyle(
               fontSize: obj.style.fontSize > 0 ? obj.style.fontSize : 13,
@@ -290,7 +294,9 @@ class _LayoutPreviewWidgetState extends State<LayoutPreviewWidget> {
         );
 
       case 'button':
-        final btnText = obj.text.isEmpty ? 'Button' : obj.text;
+      case 'popover_button':
+        final btnText = resolveLayoutMergeText(obj.text.isEmpty ? 'Button' : obj.text,
+            record: record, userName: widget.currentUserName);
         return Container(
           alignment: Alignment.center,
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -307,7 +313,7 @@ class _LayoutPreviewWidgetState extends State<LayoutPreviewWidget> {
             style: TextStyle(
               fontSize: obj.style.fontSize > 0 ? obj.style.fontSize : 12,
               fontWeight: FontWeight.w600,
-              color: Colors.black87,
+              color: parseLayoutColor(obj.style.textColor) ?? Colors.black87,
             ),
             overflow: TextOverflow.ellipsis,
           ),
@@ -346,6 +352,9 @@ class _LayoutPreviewWidgetState extends State<LayoutPreviewWidget> {
         );
 
       default:
+        final drawn = buildDrawnLayoutObject(obj,
+            record: record, userName: widget.currentUserName, pageNumber: _currentRecordIndex + 1);
+        if (drawn != null) return drawn;
         return Container(
           decoration: BoxDecoration(
             color: obj.style.fillColor != null ? _parseColor(obj.style.fillColor!) : Colors.transparent,

@@ -9,6 +9,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-06
+
+### Added
+- Layout mode: Line, Rectangle, Rounded Rectangle and Oval are drawn by dragging on the canvas (a click still places a default size). Lines run horizontally or vertically along the longer side of the drag.
+- Layout mode: line (border) color swatches and hex field, line width slider, fill "none", and text color swatches in the inspector; the status sidebar stroke control sets the line width of the selected object and of new drawings.
+- Layout mode: text inside rectangles, rounded rectangles and ovals, edited in place with a double click or Enter (Esc cancels); labels accept several lines.
+- Layout mode: Insert > Picture, PDF, Audio/Video, QuickTime and File embed the file (up to 2 MB) inside the selected shape or in a new `media` object; pictures can fit, fill-and-crop or stretch.
+- Layout mode: Insert > Current Date, Current Time, Current User Name, Page Number and Merge Field add merge symbols (`{{CurrentDate}}`, `{{field_name}}`, ...) to the selected text or a new label; Browse and Preview modes show their values.
+- Button setup in the inspector Data tab: a button runs a single step (New, Duplicate, Delete, Commit or Revert Record, Go to Record, Enter Find Mode, Perform Find, Show All Records, Enter Preview Mode, Go to Layout, Set Field, Show Custom Dialog, Open URL) or performs a stored script with an optional parameter.
+- Client-side runner for button actions and Perform Script (record, navigation, Set Field, dialog and URL steps). Steps that need the calculation engine (`If`, `Loop`, `Set Variable`, REST calls) stop the script with a message.
+- Set Tab Order tool (layout toolbar and status sidebar, replacing the Tab Control and Rotate tools): click fields and buttons in Tab key order, or number them automatically in reading order. Browse and Find modes follow that order.
+- Layout mode keyboard: arrow keys move the selected object (Shift: 8 pt), Esc returns to the pointer.
+- Layout JSON schema: `rect`, `rounded_rect`, `oval`, `line` and `media` objects and the `text`, `tab_order`, `action` and `media` properties.
+
+### Fixed
+- Tools picked in the status sidebar palette (Line, Rectangle, Oval, ...) did nothing: the selection never reached the layout designer.
+- Typing in the inspector text fields reset the cursor and lost input on every rebuild, and Backspace/Delete deleted the selected object while typing.
+- The border color could only be typed as hex, the "None" fill swatch did not clear the fill, and malformed colors broke the canvas.
+- Ovals were drawn as circles, and lines, ovals and shapes rendered as plain rectangles in Browse and Preview modes.
+- Button text color and size ignored the object style; buttons only acted according to words in their label (kept for buttons without an action).
+- Quick consecutive inspector edits (a color, then a width) could undo each other.
+
 ## [0.5.1] - 2026-10-06
 
 ### Added

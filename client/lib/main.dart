@@ -143,6 +143,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
   int _totalRecords = 0;
   bool _isFindOmit = false;
   LayoutTool _activeLayoutTool = LayoutTool.pointer;
+  double _layoutStrokeWidth = 1.0;
   UserModel? _currentUser;
   List<LayoutModel> _serverLayouts = [];
   Map<String, String> _userPermissions = {};
@@ -1396,6 +1397,16 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                   onResetZoom: () => ref.read(zoomProvider.notifier).resetZoom(),
                   onSelectZoom: (level) => ref.read(zoomProvider.notifier).setZoom(level),
                   zoomLevel: ref.watch(zoomProvider),
+                  currentUserName: _currentUser?.username,
+                  onInsertMedia: mode == OperationalMode.layout
+                      ? (kind) => _layoutDesignerKey.currentState?.insertMedia(kind)
+                      : null,
+                  onInsertSymbol: mode == OperationalMode.layout
+                      ? (symbol) => _layoutDesignerKey.currentState?.insertText(symbol)
+                      : null,
+                  onInsertMergeField: mode == OperationalMode.layout
+                      ? () => _layoutDesignerKey.currentState?.insertMergeField()
+                      : null,
                 ),
                 // Main Workspace: Classic File4Base Left Status Sidebar + Content Area
                 Expanded(
@@ -1457,6 +1468,13 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                           },
                           onNewRecord: () => _dataBrowserKey.currentState?.createNewRecord(),
                           onDeleteRecord: () => _dataBrowserKey.currentState?.deleteCurrentRecord(),
+                          selectedTool: _activeLayoutTool,
+                          onToolSelected: (tool) => setState(() => _activeLayoutTool = tool),
+                          strokeWidth: _layoutStrokeWidth,
+                          onStrokeWidthChanged: (w) {
+                            setState(() => _layoutStrokeWidth = w);
+                            _layoutDesignerKey.currentState?.applyStrokeWidth(w);
+                          },
                         ),
                       Expanded(
                         child: _buildZoomableBody(context, mode, ref.watch(zoomProvider)),
@@ -1858,6 +1876,14 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
           mode: mode,
           onModeChanged: _changeMode,
           onTableModified: _loadTables,
+          currentUserName: _currentUser?.username,
+          onGoToLayout: (name) {
+            final match = _serverLayouts
+                .where((l) => l.name.toLowerCase() == name.toLowerCase() || l.id == name)
+                .firstOrNull;
+            if (match != null) _selectLayout(match);
+            return match != null;
+          },
           onRecordChanged: (idx, total) {
             if (mounted) {
               setState(() {
@@ -1930,6 +1956,9 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
           onSaved: () => _loadTables(targetLayoutId: _activeLayout?.id),
           onAutoSaveDirty: AutoSaveService.instance.markDirty,
           activeTool: _activeLayoutTool,
+          onToolChanged: (tool) {
+            if (mounted && tool != _activeLayoutTool) setState(() => _activeLayoutTool = tool);
+          },
         );
       case OperationalMode.preview:
         return LayoutPreviewWidget(
@@ -1943,6 +1972,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
               ),
           pageSetup: _pageSetup,
           onPageSetup: _handlePageSetup,
+          currentUserName: _currentUser?.username,
         );
     }
   }
