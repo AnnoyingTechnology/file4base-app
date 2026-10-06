@@ -2,9 +2,11 @@ package schema
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/file4base/file4base-app/server/internal/dbal"
@@ -37,59 +39,67 @@ type AuthUser struct {
 	Permissions []UserLayoutPermission `json:"permissions"`
 }
 
-// Authenticate verifies user credentials and returns the user with layout permissions
+// Access levels a user can hold on a layout.
+const (
+	AccessReadWrite = "read_write"
+	AccessReadOnly  = "read_only"
+	AccessNone      = "none"
+)
+
+// ErrInvalidCredentials is returned by Authenticate for any username/password mismatch.
+// The message is deliberately identical for unknown users and wrong passwords.
+var ErrInvalidCredentials = errors.New("invalid username or password")
+
+var (
+	dummyHashOnce sync.Once
+	dummyHash     []byte
+)
+
+// burnPasswordCheck spends the same time as a real bcrypt comparison so that
+// response timing does not reveal whether a username exists.
+func burnPasswordCheck(password string) {
+	dummyHashOnce.Do(func() {
+		dummyHash, _ = bcrypt.GenerateFromPassword([]byte("file4base-timing-equalizer"), bcrypt.DefaultCost)
+	})
+	_ = bcrypt.CompareHashAndPassword(dummyHash, []byte(password))
+}
+
+func isValidRole(role string) bool {
+	return role == "owner" || role == "admin" || role == "user"
+}
+
+func isValidAccessLevel(level string) bool {
+	return level == AccessReadWrite || level == AccessReadOnly || level == AccessNone
+}
+
+// Authenticate verifies user credentials and returns the user with layout permissions.
+// Both the username and the password must match the same account.
 func (s *Service) Authenticate(ctx context.Context, username, password string) (*AuthUser, error) {
 	if strings.TrimSpace(password) == "" {
 		return nil, errors.New("password is required")
 	}
+	cleanUser := strings.ToLower(strings.TrimSpace(username))
+	if cleanUser == "" {
+		return nil, errors.New("username is required")
+	}
 
 	db := s.driver.DB()
 	dialect := s.driver.Dialect()
-	cleanUser := strings.ToLower(strings.TrimSpace(username))
 
 	var id, uName, hash, role string
 	var isActive bool
-	var found bool
 
-	if cleanUser != "" {
-		q := `SELECT id, username, password_hash, role, COALESCE(is_active, TRUE) FROM sys_users WHERE LOWER(username) = LOWER($1) LIMIT 1`
-		if dialect.Engine() != dbal.EnginePostgres {
-			q = `SELECT id, username, password_hash, role, COALESCE(is_active, TRUE) FROM sys_users WHERE LOWER(username) = LOWER(?) LIMIT 1`
-		}
-		err := db.QueryRowContext(ctx, q, cleanUser).Scan(&id, &uName, &hash, &role, &isActive)
-		if err == nil {
-			if err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)); err == nil {
-				found = true
-			}
-		}
+	q := `SELECT id, username, password_hash, role, COALESCE(is_active, TRUE) FROM sys_users WHERE LOWER(username) = LOWER($1) LIMIT 1`
+	if dialect.Engine() != dbal.EnginePostgres {
+		q = `SELECT id, username, password_hash, role, COALESCE(is_active, TRUE) FROM sys_users WHERE LOWER(username) = LOWER(?) LIMIT 1`
+	}
+	if err := db.QueryRowContext(ctx, q, cleanUser).Scan(&id, &uName, &hash, &role, &isActive); err != nil {
+		burnPasswordCheck(password)
+		return nil, ErrInvalidCredentials
 	}
 
-	// Fallback: If username was not found or was empty, check if password matches any owner account (e.g. database password)
-	if !found {
-		qOwner := `SELECT id, username, password_hash, role, COALESCE(is_active, TRUE) FROM sys_users WHERE role = 'owner' ORDER BY created_at ASC`
-		rows, err := db.QueryContext(ctx, qOwner)
-		if err == nil {
-			defer rows.Close()
-			for rows.Next() {
-				var oID, oName, oHash, oRole string
-				var oActive bool
-				if err := rows.Scan(&oID, &oName, &oHash, &oRole, &oActive); err == nil {
-					if bcrypt.CompareHashAndPassword([]byte(oHash), []byte(password)) == nil {
-						id = oID
-						uName = oName
-						hash = oHash
-						role = oRole
-						isActive = oActive
-						found = true
-						break
-					}
-				}
-			}
-		}
-	}
-
-	if !found {
-		return nil, errors.New("invalid username or password")
+	if err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)); err != nil {
+		return nil, ErrInvalidCredentials
 	}
 
 	if !isActive {
@@ -109,6 +119,117 @@ func (s *Service) Authenticate(ctx context.Context, username, password string) (
 		IsActive:    isActive,
 		Permissions: perms,
 	}, nil
+}
+
+// CountUsers returns the number of accounts registered in sys_users.
+func (s *Service) CountUsers(ctx context.Context) (int, error) {
+	var count int
+	if err := s.driver.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM sys_users`).Scan(&count); err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
+// HasSystemCatalog reports whether the database already contains the File4Base user catalog.
+func (s *Service) HasSystemCatalog(ctx context.Context) bool {
+	var count int
+	return s.driver.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM sys_users`).Scan(&count) == nil
+}
+
+// GetUser returns a single user account by id.
+func (s *Service) GetUser(ctx context.Context, id string) (*UserMetadata, error) {
+	q := `SELECT id, username, role, COALESCE(is_active, TRUE), created_at, updated_at FROM sys_users WHERE id = $1`
+	if s.driver.Dialect().Engine() != dbal.EnginePostgres {
+		q = `SELECT id, username, role, COALESCE(is_active, TRUE), created_at, updated_at FROM sys_users WHERE id = ?`
+	}
+	var u UserMetadata
+	if err := s.driver.DB().QueryRowContext(ctx, q, id).Scan(&u.ID, &u.Username, &u.Role, &u.IsActive, &u.CreatedAt, &u.UpdatedAt); err != nil {
+		return nil, errors.New("user not found")
+	}
+	return &u, nil
+}
+
+// countActiveOwners returns how many active owner accounts exist.
+func (s *Service) countActiveOwners(ctx context.Context) int {
+	var count int
+	_ = s.driver.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM sys_users WHERE role = 'owner' AND COALESCE(is_active, TRUE) = TRUE`).Scan(&count)
+	return count
+}
+
+// LayoutAccess returns the access level a user holds on a layout.
+// A layout without an explicit permission row defaults to read_write.
+func (s *Service) LayoutAccess(ctx context.Context, userID, layoutID string) (string, error) {
+	q := `SELECT access_level FROM sys_user_permissions WHERE user_id = $1 AND layout_id = $2`
+	if s.driver.Dialect().Engine() != dbal.EnginePostgres {
+		q = `SELECT access_level FROM sys_user_permissions WHERE user_id = ? AND layout_id = ?`
+	}
+	var level string
+	err := s.driver.DB().QueryRowContext(ctx, q, userID, layoutID).Scan(&level)
+	if errors.Is(err, sql.ErrNoRows) {
+		return AccessReadWrite, nil
+	}
+	if err != nil {
+		return AccessNone, fmt.Errorf("failed resolving layout access: %w", err)
+	}
+	if !isValidAccessLevel(level) {
+		return AccessNone, nil
+	}
+	return level, nil
+}
+
+// TableAccess derives the access level a user holds on a base table from the
+// layout permissions: the data API works on tables, while permissions are
+// granted per layout, so the most permissive level across every layout built
+// on the table applies. A table without layouts, or a layout without an
+// explicit permission row, defaults to read_write.
+func (s *Service) TableAccess(ctx context.Context, userID, tableName string) (string, error) {
+	q := `SELECT p.access_level
+	      FROM sys_layouts l
+	      JOIN sys_table_occurrences o ON o.id = l.table_occurrence_id
+	      JOIN sys_tables t ON t.id = o.base_table_id
+	      LEFT JOIN sys_user_permissions p ON p.layout_id = l.id AND p.user_id = $1
+	      WHERE t.name = $2`
+	if s.driver.Dialect().Engine() != dbal.EnginePostgres {
+		q = `SELECT p.access_level
+		      FROM sys_layouts l
+		      JOIN sys_table_occurrences o ON o.id = l.table_occurrence_id
+		      JOIN sys_tables t ON t.id = o.base_table_id
+		      LEFT JOIN sys_user_permissions p ON p.layout_id = l.id AND p.user_id = ?
+		      WHERE t.name = ?`
+	}
+	rows, err := s.driver.DB().QueryContext(ctx, q, userID, tableName)
+	if err != nil {
+		return AccessNone, fmt.Errorf("failed resolving table access: %w", err)
+	}
+	defer rows.Close()
+
+	rank := map[string]int{AccessNone: 0, AccessReadOnly: 1, AccessReadWrite: 2}
+	best := -1
+	for rows.Next() {
+		var level sql.NullString
+		if err := rows.Scan(&level); err != nil {
+			return AccessNone, err
+		}
+		current := rank[AccessReadWrite]
+		if level.Valid {
+			current = rank[level.String] // unknown values rank as "none"
+		}
+		if current > best {
+			best = current
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return AccessNone, err
+	}
+
+	switch best {
+	case -1, 2:
+		return AccessReadWrite, nil
+	case 1:
+		return AccessReadOnly, nil
+	default:
+		return AccessNone, nil
+	}
 }
 
 // ListUsers returns all registered users
@@ -133,10 +254,11 @@ func (s *Service) ListUsers(ctx context.Context) ([]UserMetadata, error) {
 
 // CreateUser creates a new user account with hashed password
 func (s *Service) CreateUser(ctx context.Context, username, password, role string, isActive ...bool) (*UserMetadata, error) {
+	username = strings.TrimSpace(username)
 	if username == "" || password == "" {
 		return nil, errors.New("username and password are required")
 	}
-	if role != "owner" && role != "admin" && role != "user" {
+	if !isValidRole(role) {
 		role = "user"
 	}
 	active := true
@@ -185,6 +307,25 @@ func (s *Service) UpdateUser(ctx context.Context, id, password, role string, isA
 		activeVal = isActive[0]
 	}
 
+	current, err := s.GetUser(ctx, id)
+	if err != nil {
+		return err
+	}
+	if role == "" {
+		role = current.Role
+	}
+	if !isValidRole(role) {
+		return fmt.Errorf("invalid role '%s'", role)
+	}
+	// Never leave a database without an active owner
+	if current.Role == "owner" && current.IsActive {
+		demoted := role != "owner"
+		deactivated := activeVal != nil && !*activeVal
+		if (demoted || deactivated) && s.countActiveOwners(ctx) <= 1 {
+			return errors.New("cannot demote or deactivate the only active owner account")
+		}
+	}
+
 	if password != "" {
 		hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 		if err != nil {
@@ -211,7 +352,7 @@ func (s *Service) UpdateUser(ctx context.Context, id, password, role string, isA
 		if dialect.Engine() != dbal.EnginePostgres {
 			q = `UPDATE sys_users SET role = ?, is_active = ?, updated_at = ? WHERE id = ?`
 		}
-		_, err := db.ExecContext(ctx, q, role, *activeVal, now, id)
+		_, err = db.ExecContext(ctx, q, role, *activeVal, now, id)
 		return err
 	}
 
@@ -219,7 +360,7 @@ func (s *Service) UpdateUser(ctx context.Context, id, password, role string, isA
 	if dialect.Engine() != dbal.EnginePostgres {
 		q = `UPDATE sys_users SET role = ?, updated_at = ? WHERE id = ?`
 	}
-	_, err := db.ExecContext(ctx, q, role, now, id)
+	_, err = db.ExecContext(ctx, q, role, now, id)
 	return err
 }
 
@@ -287,37 +428,54 @@ func (s *Service) GetUserPermissions(ctx context.Context, userID string) ([]User
 	return perms, nil
 }
 
-// SetUserPermissions replaces all layout permissions for a user
+// SetUserPermissions replaces all layout permissions for a user.
+// Every level is stored explicitly, including "none": a layout without a row
+// defaults to read_write, so dropping "none" rows would silently grant access.
 func (s *Service) SetUserPermissions(ctx context.Context, userID string, perms []UserLayoutPermission) error {
+	for _, p := range perms {
+		if p.LayoutID != "" && !isValidAccessLevel(p.AccessLevel) {
+			return fmt.Errorf("invalid access level '%s' for layout %s", p.AccessLevel, p.LayoutID)
+		}
+	}
+
 	db := s.driver.DB()
 	dialect := s.driver.Dialect()
+
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
 
 	// 1. Delete existing permissions
 	qDel := `DELETE FROM sys_user_permissions WHERE user_id = $1`
 	if dialect.Engine() != dbal.EnginePostgres {
 		qDel = `DELETE FROM sys_user_permissions WHERE user_id = ?`
 	}
-	if _, err := db.ExecContext(ctx, qDel, userID); err != nil {
+	if _, err := tx.ExecContext(ctx, qDel, userID); err != nil {
 		return fmt.Errorf("failed deleting old permissions: %w", err)
 	}
 
-	// 2. Insert new permissions (only if not 'none')
+	// 2. Insert the new permission set
 	qIns := `INSERT INTO sys_user_permissions (id, user_id, layout_id, access_level, created_at) VALUES ($1, $2, $3, $4, $5)`
 	if dialect.Engine() != dbal.EnginePostgres {
 		qIns = `INSERT INTO sys_user_permissions (id, user_id, layout_id, access_level, created_at) VALUES (?, ?, ?, ?, ?)`
 	}
 
 	now := time.Now().UTC()
+	seen := make(map[string]struct{}, len(perms))
 	for _, p := range perms {
-		if p.AccessLevel == "none" || p.LayoutID == "" {
+		if p.LayoutID == "" {
 			continue
 		}
-		permID := uuid.NewString()
-		_, err := db.ExecContext(ctx, qIns, permID, userID, p.LayoutID, p.AccessLevel, now)
-		if err != nil {
+		if _, dup := seen[p.LayoutID]; dup {
+			continue
+		}
+		seen[p.LayoutID] = struct{}{}
+		if _, err := tx.ExecContext(ctx, qIns, uuid.NewString(), userID, p.LayoutID, p.AccessLevel, now); err != nil {
 			return fmt.Errorf("failed inserting permission for layout %s: %w", p.LayoutID, err)
 		}
 	}
 
-	return nil
+	return tx.Commit()
 }

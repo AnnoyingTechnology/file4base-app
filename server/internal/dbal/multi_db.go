@@ -3,23 +3,65 @@ package dbal
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"net/url"
 	"regexp"
 	"strings"
 	"sync"
+	"time"
 )
 
 var validDatabaseName = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_]*$`)
 
-// MultiDatabaseManager manages connection pools across multiple databases on a server
+// ErrDatabaseExists is returned by CreateDatabase when the database is already present.
+var ErrDatabaseExists = errors.New("database already exists")
+
+// Per-database connection pool limits. Every solution database gets its own
+// pool, so the limits are deliberately small to keep the total bounded.
+const (
+	maxOpenConnsPerDatabase = 10
+	maxIdleConnsPerDatabase = 2
+	connMaxIdleTime         = 5 * time.Minute
+)
+
+// protectedDatabases are engine-internal databases that must never be used as
+// a File4Base solution database nor dropped through the API.
+var protectedDatabases = map[string]struct{}{
+	"postgres":           {},
+	"template0":          {},
+	"template1":          {},
+	"mysql":              {},
+	"information_schema": {},
+	"performance_schema": {},
+	"sys":                {},
+}
+
+// IsProtectedDatabase reports whether name is an engine-internal database.
+func IsProtectedDatabase(name string) bool {
+	_, ok := protectedDatabases[strings.ToLower(strings.TrimSpace(name))]
+	return ok
+}
+
+// IsValidDatabaseName reports whether name is a syntactically safe database identifier.
+func IsValidDatabaseName(name string) bool {
+	return validDatabaseName.MatchString(name)
+}
+
+// MultiDatabaseManager manages connection pools across multiple databases on a server.
+//
+// The manager is stateless with respect to callers: it has a fixed default
+// (administrative) database taken from the base DSN, used for server-level
+// operations such as listing, creating and dropping databases. Which solution
+// database a request works on is decided per request by the API layer (see
+// WithDriver), never by mutating the manager.
 type MultiDatabaseManager struct {
-	mu             sync.RWMutex
-	baseEngine     EngineType
-	baseDSN        string
-	activeDBName   string
-	drivers        map[string]DatabaseDriver
-	parsedURL      *url.URL
+	mu            sync.RWMutex
+	baseEngine    EngineType
+	baseDSN       string
+	defaultDBName string
+	drivers       map[string]DatabaseDriver
+	parsedURL     *url.URL
 }
 
 // NewMultiDatabaseManager initializes a MultiDatabaseManager with a base DSN
@@ -35,11 +77,11 @@ func NewMultiDatabaseManager(engine EngineType, baseDSN string) (*MultiDatabaseM
 	}
 
 	mgr := &MultiDatabaseManager{
-		baseEngine:   engine,
-		baseDSN:      baseDSN,
-		activeDBName: initialDB,
-		drivers:      make(map[string]DatabaseDriver),
-		parsedURL:    u,
+		baseEngine:    engine,
+		baseDSN:       baseDSN,
+		defaultDBName: initialDB,
+		drivers:       make(map[string]DatabaseDriver),
+		parsedURL:     u,
 	}
 
 	return mgr, nil
@@ -59,18 +101,20 @@ func (m *MultiDatabaseManager) BuildDSN(dbName string) string {
 	return uCopy.String()
 }
 
-// ActiveDatabase returns the current active database name
-func (m *MultiDatabaseManager) ActiveDatabase() string {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	return m.activeDBName
+// DefaultDatabase returns the administrative database named in the base DSN.
+// It never changes for the lifetime of the manager.
+func (m *MultiDatabaseManager) DefaultDatabase() string {
+	return m.defaultDBName
 }
 
-// Dialect returns the dialect for the active database engine
+// Engine returns the database engine this manager talks to.
+func (m *MultiDatabaseManager) Engine() EngineType {
+	return m.baseEngine
+}
+
+// Dialect returns the dialect of the default (administrative) database engine
 func (m *MultiDatabaseManager) Dialect() Dialect {
-	m.mu.RLock()
-	active := m.activeDBName
-	m.mu.RUnlock()
+	active := m.defaultDBName
 
 	driver, _ := m.GetDriver(context.Background(), active)
 	if driver != nil {
@@ -80,11 +124,9 @@ func (m *MultiDatabaseManager) Dialect() Dialect {
 	return d
 }
 
-// DB returns the *sql.DB connection pool for the active database
+// DB returns the *sql.DB connection pool of the default (administrative) database
 func (m *MultiDatabaseManager) DB() *sql.DB {
-	m.mu.RLock()
-	active := m.activeDBName
-	m.mu.RUnlock()
+	active := m.defaultDBName
 
 	driver, err := m.GetDriver(context.Background(), active)
 	if err != nil {
@@ -93,11 +135,9 @@ func (m *MultiDatabaseManager) DB() *sql.DB {
 	return driver.DB()
 }
 
-// Ping checks connectivity to the active database
+// Ping checks connectivity to the default (administrative) database
 func (m *MultiDatabaseManager) Ping(ctx context.Context) error {
-	m.mu.RLock()
-	active := m.activeDBName
-	m.mu.RUnlock()
+	active := m.defaultDBName
 
 	driver, err := m.GetDriver(ctx, active)
 	if err != nil {
@@ -109,9 +149,7 @@ func (m *MultiDatabaseManager) Ping(ctx context.Context) error {
 // GetDriver returns or establishes a DatabaseDriver for the specified database
 func (m *MultiDatabaseManager) GetDriver(ctx context.Context, dbName string) (DatabaseDriver, error) {
 	if dbName == "" {
-		m.mu.RLock()
-		dbName = m.activeDBName
-		m.mu.RUnlock()
+		dbName = m.defaultDBName
 	}
 
 	m.mu.RLock()
@@ -150,6 +188,12 @@ func (m *MultiDatabaseManager) GetDriver(ctx context.Context, dbName string) (Da
 		return nil, fmt.Errorf("ping failed for database %s: %w", dbName, err)
 	}
 
+	if pool := newDriver.DB(); pool != nil {
+		pool.SetMaxOpenConns(maxOpenConnsPerDatabase)
+		pool.SetMaxIdleConns(maxIdleConnsPerDatabase)
+		pool.SetConnMaxIdleTime(connMaxIdleTime)
+	}
+
 	m.drivers[dbName] = newDriver
 	return newDriver, nil
 }
@@ -163,38 +207,49 @@ func (m *MultiDatabaseManager) buildDSNLocked(dbName string) string {
 	return uCopy.String()
 }
 
-// SetActiveDatabase changes the active database, initializing a connection if needed
-func (m *MultiDatabaseManager) SetActiveDatabase(ctx context.Context, dbName string) (DatabaseDriver, error) {
+// DriverFor returns the DatabaseDriver of a solution database after validating
+// its name. It does not change any shared state: callers keep the returned
+// driver for the duration of their request.
+func (m *MultiDatabaseManager) DriverFor(ctx context.Context, dbName string) (DatabaseDriver, error) {
 	dbName = strings.TrimSpace(dbName)
 	if !validDatabaseName.MatchString(dbName) {
 		return nil, fmt.Errorf("invalid database name: %s", dbName)
 	}
-
-	driver, err := m.GetDriver(ctx, dbName)
-	if err != nil {
-		return nil, err
+	if IsProtectedDatabase(dbName) {
+		return nil, fmt.Errorf("database '%s' is a protected system database", dbName)
 	}
+	return m.GetDriver(ctx, dbName)
+}
 
-	m.mu.Lock()
-	m.activeDBName = dbName
-	m.mu.Unlock()
-
-	return driver, nil
+// LookupDatabase finds a solution database by name (case-insensitively) and
+// returns its canonical name as stored by the engine.
+func (m *MultiDatabaseManager) LookupDatabase(ctx context.Context, dbName string) (string, bool, error) {
+	dbName = strings.TrimSpace(dbName)
+	if !validDatabaseName.MatchString(dbName) || IsProtectedDatabase(dbName) {
+		return "", false, nil
+	}
+	names, err := m.ListDatabases(ctx)
+	if err != nil {
+		return "", false, err
+	}
+	for _, name := range names {
+		if name == dbName {
+			return name, true, nil
+		}
+	}
+	for _, name := range names {
+		if strings.EqualFold(name, dbName) {
+			return name, true, nil
+		}
+	}
+	return "", false, nil
 }
 
 // ListDatabases returns all non-template databases available on the PostgreSQL server
 func (m *MultiDatabaseManager) ListDatabases(ctx context.Context) ([]string, error) {
-	m.mu.RLock()
-	active := m.activeDBName
-	m.mu.RUnlock()
-
-	driver, err := m.GetDriver(ctx, active)
+	driver, err := m.GetDriver(ctx, m.defaultDBName)
 	if err != nil {
-		// Try admin/postgres fallback
-		driver, err = m.GetDriver(ctx, "postgres")
-		if err != nil {
-			return nil, fmt.Errorf("unable to reach database server to list databases: %w", err)
-		}
+		return nil, fmt.Errorf("unable to reach database server to list databases: %w", err)
 	}
 
 	db := driver.DB()
@@ -218,30 +273,34 @@ func (m *MultiDatabaseManager) ListDatabases(ctx context.Context) ([]string, err
 		if err := rows.Scan(&name); err != nil {
 			return nil, err
 		}
+		if IsProtectedDatabase(name) || !validDatabaseName.MatchString(name) {
+			continue
+		}
 		result = append(result, name)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 
 	return result, nil
 }
 
-// CreateDatabase creates a new physical database on the server
+// CreateDatabase creates a new physical database on the server.
+// It returns ErrDatabaseExists when a database with that name is already present.
 func (m *MultiDatabaseManager) CreateDatabase(ctx context.Context, dbName string) error {
 	dbName = strings.ToLower(strings.TrimSpace(dbName))
 	if !validDatabaseName.MatchString(dbName) {
 		return fmt.Errorf("invalid database name '%s'; must start with a letter and contain only alphanumeric/underscore characters", dbName)
 	}
 
-	// Use an existing connection (e.g. active or postgres) to execute CREATE DATABASE
-	m.mu.RLock()
-	active := m.activeDBName
-	m.mu.RUnlock()
+	if IsProtectedDatabase(dbName) {
+		return fmt.Errorf("'%s' is a protected system database name", dbName)
+	}
 
-	driver, err := m.GetDriver(ctx, active)
+	// CREATE DATABASE runs through the administrative connection
+	driver, err := m.GetDriver(ctx, m.defaultDBName)
 	if err != nil {
-		driver, err = m.GetDriver(ctx, "postgres")
-		if err != nil {
-			return fmt.Errorf("unable to connect to database server: %w", err)
-		}
+		return fmt.Errorf("unable to connect to database server: %w", err)
 	}
 
 	db := driver.DB()
@@ -261,7 +320,7 @@ func (m *MultiDatabaseManager) CreateDatabase(ctx context.Context, dbName string
 	}
 
 	if exists {
-		return nil // Already exists
+		return ErrDatabaseExists
 	}
 
 	// CREATE DATABASE cannot run in a transaction block
@@ -284,17 +343,13 @@ func (m *MultiDatabaseManager) DropDatabase(ctx context.Context, dbName string) 
 		return fmt.Errorf("invalid database name '%s'", dbName)
 	}
 
-	// Prevent dropping system or currently active database without switching first
-	m.mu.RLock()
-	active := m.activeDBName
-	m.mu.RUnlock()
-
-	if dbName == "postgres" || dbName == "mysql" || dbName == "information_schema" {
+	if IsProtectedDatabase(dbName) {
 		return fmt.Errorf("cannot drop protected system database '%s'", dbName)
 	}
 
-	if dbName == active {
-		return fmt.Errorf("cannot drop active connected database '%s'; please switch to another database first", dbName)
+	// The administrative database carries the connection used to run DROP DATABASE
+	if strings.EqualFold(dbName, m.defaultDBName) {
+		return fmt.Errorf("cannot drop '%s': it is the server's administrative database", dbName)
 	}
 
 	// Close driver connection to target db if open in pool
@@ -305,8 +360,8 @@ func (m *MultiDatabaseManager) DropDatabase(ctx context.Context, dbName string) 
 	}
 	m.mu.Unlock()
 
-	// Connect through admin/postgres database to execute DROP DATABASE
-	adminDriver, err := m.GetDriver(ctx, "postgres")
+	// Connect through the administrative database to execute DROP DATABASE
+	adminDriver, err := m.GetDriver(ctx, m.defaultDBName)
 	if err != nil {
 		return fmt.Errorf("unable to connect to admin database to drop: %w", err)
 	}

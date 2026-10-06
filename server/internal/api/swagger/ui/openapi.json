@@ -2,8 +2,8 @@
   "openapi": "3.0.3",
   "info": {
     "title": "File4Base API Engine",
-    "description": "Enterprise-grade REST and Dynamic Relational DDL Database Engine for File4Base. Supports runtime schema migrations, table occurrences, relationships graph, dynamic Find Mode formula parsing, security ACL, and solution archiving.",
-    "version": "0.4.7",
+    "description": "Enterprise-grade REST and Dynamic Relational DDL Database Engine for File4Base. Supports runtime schema migrations, table occurrences, relationships graph, dynamic Find Mode formula parsing, security ACL, and solution archiving. Every endpoint except the health probes, sign-in and the database selector requires a session token: sign in with POST /api/v1/auth/login and send the returned token as 'Authorization: Bearer <token>'. A session is bound to the database it signed in to.",
+    "version": "0.5.0",
     "contact": {
       "name": "File4Base Core Team",
       "url": "https://github.com/file4base/file4base-app"
@@ -48,7 +48,9 @@
   "paths": {
     "/healthz": {
       "get": {
-        "tags": ["Health & Probes"],
+        "tags": [
+          "Health & Probes"
+        ],
         "summary": "System Health Status (RFC Draft)",
         "description": "Returns full health diagnostic including database connectivity, uptime, version, and component status.",
         "responses": {
@@ -65,24 +67,30 @@
           "503": {
             "description": "Service unhealthy or database unavailable"
           }
-        }
+        },
+        "security": []
       }
     },
     "/healthz/liveness": {
       "get": {
-        "tags": ["Health & Probes"],
+        "tags": [
+          "Health & Probes"
+        ],
         "summary": "Liveness Probe",
         "description": "Checks if the HTTP server process is running.",
         "responses": {
           "200": {
             "description": "Process alive"
           }
-        }
+        },
+        "security": []
       }
     },
     "/healthz/readiness": {
       "get": {
-        "tags": ["Health & Probes"],
+        "tags": [
+          "Health & Probes"
+        ],
         "summary": "Readiness Probe",
         "description": "Checks if database connections and system catalog tables are ready to accept traffic.",
         "responses": {
@@ -92,12 +100,15 @@
           "503": {
             "description": "Not ready or shutting down"
           }
-        }
+        },
+        "security": []
       }
     },
     "/healthz/startup": {
       "get": {
-        "tags": ["Health & Probes"],
+        "tags": [
+          "Health & Probes"
+        ],
         "summary": "Startup Probe",
         "description": "Checks if the initial database migrations and catalogs have completed.",
         "responses": {
@@ -107,12 +118,15 @@
           "503": {
             "description": "Startup in progress"
           }
-        }
+        },
+        "security": []
       }
     },
     "/api/v1/schemas/tables": {
       "get": {
-        "tags": ["Schemas & DDL"],
+        "tags": [
+          "Schemas & DDL"
+        ],
         "summary": "List Tables",
         "description": "Retrieves all registered user database tables and their column definitions.",
         "responses": {
@@ -128,11 +142,19 @@
                 }
               }
             }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
           }
         }
       },
       "post": {
-        "tags": ["Schemas & DDL"],
+        "tags": [
+          "Schemas & DDL"
+        ],
         "summary": "Create Table",
         "description": "Creates a new physical table in PostgreSQL/MariaDB and registers it in `sys_tables` with an automatic primary key.",
         "requestBody": {
@@ -165,13 +187,21 @@
                 }
               }
             }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
           }
         }
       }
     },
     "/api/v1/schemas/tables/{id}/columns": {
       "post": {
-        "tags": ["Schemas & DDL"],
+        "tags": [
+          "Schemas & DDL"
+        ],
         "summary": "Add Column to Table",
         "description": "Executes dynamic DDL `ALTER TABLE ADD COLUMN` and registers field options in `sys_columns`.",
         "parameters": [
@@ -208,13 +238,21 @@
           },
           "400": {
             "description": "Invalid column parameters"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
           }
         }
       }
     },
     "/api/v1/schemas/tables/{id}/columns/{columnId}": {
       "put": {
-        "tags": ["Schemas & DDL"],
+        "tags": [
+          "Schemas & DDL"
+        ],
         "summary": "Update Column Metadata and Options",
         "description": "Updates display name and field options (auto-enter rules, default values, calculation formulas, validation rules).",
         "parameters": [
@@ -223,14 +261,18 @@
             "in": "path",
             "required": true,
             "description": "Table ID",
-            "schema": { "type": "string" }
+            "schema": {
+              "type": "string"
+            }
           },
           {
             "name": "columnId",
             "in": "path",
             "required": true,
             "description": "Column ID",
-            "schema": { "type": "string" }
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "requestBody": {
@@ -253,11 +295,19 @@
                 }
               }
             }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
           }
         }
       },
       "delete": {
-        "tags": ["Schemas & DDL"],
+        "tags": [
+          "Schemas & DDL"
+        ],
         "summary": "Delete Column",
         "description": "Drops the column from the physical database table and removes it from `sys_columns`. Cannot delete primary key.",
         "parameters": [
@@ -265,25 +315,37 @@
             "name": "id",
             "in": "path",
             "required": true,
-            "schema": { "type": "string" }
+            "schema": {
+              "type": "string"
+            }
           },
           {
             "name": "columnId",
             "in": "path",
             "required": true,
-            "schema": { "type": "string" }
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
           "204": {
             "description": "Column dropped successfully"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
           }
         }
       }
     },
     "/api/v1/schemas/occurrences": {
       "get": {
-        "tags": ["Schemas & DDL"],
+        "tags": [
+          "Schemas & DDL"
+        ],
         "summary": "List Table Occurrences",
         "responses": {
           "200": {
@@ -298,11 +360,19 @@
                 }
               }
             }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
           }
         }
       },
       "post": {
-        "tags": ["Schemas & DDL"],
+        "tags": [
+          "Schemas & DDL"
+        ],
         "summary": "Create Table Occurrence",
         "requestBody": {
           "required": true,
@@ -317,13 +387,21 @@
         "responses": {
           "201": {
             "description": "Table occurrence created"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
           }
         }
       }
     },
     "/api/v1/schemas/relationships": {
       "get": {
-        "tags": ["Schemas & DDL"],
+        "tags": [
+          "Schemas & DDL"
+        ],
         "summary": "List Relationships",
         "responses": {
           "200": {
@@ -338,11 +416,19 @@
                 }
               }
             }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
           }
         }
       },
       "post": {
-        "tags": ["Schemas & DDL"],
+        "tags": [
+          "Schemas & DDL"
+        ],
         "summary": "Create Relationship",
         "requestBody": {
           "required": true,
@@ -357,13 +443,21 @@
         "responses": {
           "201": {
             "description": "Relationship created"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
           }
         }
       }
     },
     "/api/v1/schemas/layouts": {
       "get": {
-        "tags": ["Schemas & DDL"],
+        "tags": [
+          "Schemas & DDL"
+        ],
         "summary": "List Layouts",
         "responses": {
           "200": {
@@ -378,11 +472,19 @@
                 }
               }
             }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
           }
         }
       },
       "post": {
-        "tags": ["Schemas & DDL"],
+        "tags": [
+          "Schemas & DDL"
+        ],
         "summary": "Create Layout",
         "requestBody": {
           "required": true,
@@ -397,16 +499,31 @@
         "responses": {
           "201": {
             "description": "Layout created"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
           }
         }
       }
     },
     "/api/v1/schemas/layouts/{id}": {
       "put": {
-        "tags": ["Schemas & DDL"],
+        "tags": [
+          "Schemas & DDL"
+        ],
         "summary": "Update Layout",
         "parameters": [
-          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
         ],
         "requestBody": {
           "required": true,
@@ -419,31 +536,92 @@
           }
         },
         "responses": {
-          "200": { "description": "Layout updated" }
+          "200": {
+            "description": "Layout updated"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
         }
       },
       "delete": {
-        "tags": ["Schemas & DDL"],
+        "tags": [
+          "Schemas & DDL"
+        ],
         "summary": "Delete Layout",
         "parameters": [
-          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
         ],
         "responses": {
-          "204": { "description": "Layout deleted" }
+          "204": {
+            "description": "Layout deleted"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
         }
       }
     },
     "/api/v1/data/{table}": {
       "get": {
-        "tags": ["Data Operations"],
+        "tags": [
+          "Data Operations"
+        ],
         "summary": "List Records in Table",
         "description": "Queries records from a table with pagination and sorting support.",
         "parameters": [
-          { "name": "table", "in": "path", "required": true, "schema": { "type": "string" } },
-          { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 100 } },
-          { "name": "offset", "in": "query", "schema": { "type": "integer", "default": 0 } },
-          { "name": "sort_by", "in": "query", "schema": { "type": "string" } },
-          { "name": "sort_asc", "in": "query", "schema": { "type": "boolean", "default": true } }
+          {
+            "name": "table",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 100
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 0
+            }
+          },
+          {
+            "name": "sort_by",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "sort_asc",
+            "in": "query",
+            "schema": {
+              "type": "boolean",
+              "default": true
+            }
+          }
         ],
         "responses": {
           "200": {
@@ -452,24 +630,43 @@
               "application/json": {
                 "schema": {
                   "type": "array",
-                  "items": { "type": "object" }
+                  "items": {
+                    "type": "object"
+                  }
                 }
               }
             }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
           }
         }
       },
       "post": {
-        "tags": ["Data Operations"],
+        "tags": [
+          "Data Operations"
+        ],
         "summary": "Insert Record",
         "parameters": [
-          { "name": "table", "in": "path", "required": true, "schema": { "type": "string" } }
+          {
+            "name": "table",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
         ],
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
-              "schema": { "type": "object" }
+              "schema": {
+                "type": "object"
+              }
             }
           }
         },
@@ -478,60 +675,164 @@
             "description": "Record inserted",
             "content": {
               "application/json": {
-                "schema": { "type": "object" }
+                "schema": {
+                  "type": "object"
+                }
               }
             }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
           }
         }
       }
     },
     "/api/v1/data/{table}/{id}": {
       "get": {
-        "tags": ["Data Operations"],
+        "tags": [
+          "Data Operations"
+        ],
         "summary": "Get Record by ID",
         "parameters": [
-          { "name": "table", "in": "path", "required": true, "schema": { "type": "string" } },
-          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+          {
+            "name": "table",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
         ],
         "responses": {
-          "200": { "description": "Record details", "content": { "application/json": { "schema": { "type": "object" } } } },
-          "404": { "description": "Record not found" }
+          "200": {
+            "description": "Record details",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Record not found"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
         }
       },
       "put": {
-        "tags": ["Data Operations"],
+        "tags": [
+          "Data Operations"
+        ],
         "summary": "Update Record",
         "parameters": [
-          { "name": "table", "in": "path", "required": true, "schema": { "type": "string" } },
-          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+          {
+            "name": "table",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
         ],
         "requestBody": {
           "required": true,
-          "content": { "application/json": { "schema": { "type": "object" } } }
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
         },
         "responses": {
-          "200": { "description": "Record updated successfully" }
+          "200": {
+            "description": "Record updated successfully"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
         }
       },
       "delete": {
-        "tags": ["Data Operations"],
+        "tags": [
+          "Data Operations"
+        ],
         "summary": "Delete Record",
         "parameters": [
-          { "name": "table", "in": "path", "required": true, "schema": { "type": "string" } },
-          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+          {
+            "name": "table",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
         ],
         "responses": {
-          "204": { "description": "Record deleted" }
+          "204": {
+            "description": "Record deleted"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
         }
       }
     },
     "/api/v1/data/{table}/find": {
       "post": {
-        "tags": ["Data Operations"],
+        "tags": [
+          "Data Operations"
+        ],
         "summary": "Execute Find Mode Search",
         "description": "Executes a Find query supporting wildcards (*), single characters (@/?), comparisons (>, <, >=, <=), exact (=), strict (==), negation (! / !=), ranges (...), today's date (//), and empty/non-empty search.",
         "parameters": [
-          { "name": "table", "in": "path", "required": true, "schema": { "type": "string" } }
+          {
+            "name": "table",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
         ],
         "requestBody": {
           "required": true,
@@ -558,18 +859,28 @@
               "application/json": {
                 "schema": {
                   "type": "array",
-                  "items": { "type": "object" }
+                  "items": {
+                    "type": "object"
+                  }
                 }
               }
             }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
           }
         }
       }
     },
-    "/api/v1/security/login": {
+    "/api/v1/auth/login": {
       "post": {
-        "tags": ["Security & Users"],
-        "summary": "Authenticate User",
+        "tags": [
+          "Security & Users"
+        ],
+        "summary": "Sign in to a database and open a session",
         "requestBody": {
           "required": true,
           "content": {
@@ -592,14 +903,162 @@
             }
           },
           "401": {
-            "description": "Invalid credentials"
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Database not found"
+          }
+        },
+        "security": []
+      }
+    },
+    "/api/v1/auth/logout": {
+      "post": {
+        "tags": [
+          "Security & Users"
+        ],
+        "summary": "Sign out (revokes the session token)",
+        "responses": {
+          "204": {
+            "description": "Session closed"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/api/v1/auth/session": {
+      "get": {
+        "tags": [
+          "Security & Users"
+        ],
+        "summary": "Current session (user, role, database, permissions)",
+        "responses": {
+          "200": {
+            "description": "Session details"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/api/v1/databases": {
+      "get": {
+        "tags": [
+          "Solutions & Backup"
+        ],
+        "summary": "List solution databases (public: used by the sign-in screen)",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Databases on the server",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatabaseList"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Solutions & Backup"
+        ],
+        "summary": "Create a database and its first owner account",
+        "description": "Public while ALLOW_PUBLIC_DATABASE_CREATION=true (default); otherwise requires an owner session. Never modifies an existing database.",
+        "security": [
+          {},
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateDatabaseRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Database created"
+          },
+          "409": {
+            "description": "A database with that name already exists"
+          },
+          "422": {
+            "description": "Missing name or owner credentials"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/api/v1/databases/{name}": {
+      "delete": {
+        "tags": [
+          "Solutions & Backup"
+        ],
+        "summary": "Drop a database",
+        "description": "Requires an owner session on that database, or the credentials of one of its owners in the request body.",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OwnerCredentials"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Database dropped"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "Database not found"
           }
         }
       }
     },
     "/api/v1/security/users": {
       "get": {
-        "tags": ["Security & Users"],
+        "tags": [
+          "Security & Users"
+        ],
         "summary": "List Users",
         "responses": {
           "200": {
@@ -608,32 +1067,54 @@
               "application/json": {
                 "schema": {
                   "type": "array",
-                  "items": { "$ref": "#/components/schemas/User" }
+                  "items": {
+                    "$ref": "#/components/schemas/User"
+                  }
                 }
               }
             }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
           }
         }
       },
       "post": {
-        "tags": ["Security & Users"],
+        "tags": [
+          "Security & Users"
+        ],
         "summary": "Create User",
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
-              "schema": { "$ref": "#/components/schemas/CreateUserRequest" }
+              "schema": {
+                "$ref": "#/components/schemas/CreateUserRequest"
+              }
             }
           }
         },
         "responses": {
-          "201": { "description": "User created" }
+          "201": {
+            "description": "User created"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
         }
       }
     },
     "/api/v1/security/permissions": {
       "get": {
-        "tags": ["Security & Users"],
+        "tags": [
+          "Security & Users"
+        ],
         "summary": "List Layout Permissions",
         "responses": {
           "200": {
@@ -642,32 +1123,54 @@
               "application/json": {
                 "schema": {
                   "type": "array",
-                  "items": { "$ref": "#/components/schemas/Permission" }
+                  "items": {
+                    "$ref": "#/components/schemas/Permission"
+                  }
                 }
               }
             }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
           }
         }
       },
       "post": {
-        "tags": ["Security & Users"],
+        "tags": [
+          "Security & Users"
+        ],
         "summary": "Set User Layout Permission",
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
-              "schema": { "$ref": "#/components/schemas/Permission" }
+              "schema": {
+                "$ref": "#/components/schemas/Permission"
+              }
             }
           }
         },
         "responses": {
-          "200": { "description": "Permission updated" }
+          "200": {
+            "description": "Permission updated"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
         }
       }
     },
     "/api/v1/solutions/save-copy": {
       "post": {
-        "tags": ["Solutions & Backup"],
+        "tags": [
+          "Solutions & Backup"
+        ],
         "summary": "Save Copy as MessagePack Solution Archive",
         "description": "Generates a complete standalone solution snapshot including tables, columns, occurrences, relationships, layouts, users, permissions, and data records.",
         "responses": {
@@ -681,13 +1184,21 @@
                 }
               }
             }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
           }
         }
       }
     },
     "/api/v1/solutions/load-copy": {
       "post": {
-        "tags": ["Solutions & Backup"],
+        "tags": [
+          "Solutions & Backup"
+        ],
         "summary": "Load MessagePack Solution Archive",
         "description": "Restores or imports a full database solution package into the active catalog.",
         "requestBody": {
@@ -704,6 +1215,12 @@
         "responses": {
           "200": {
             "description": "Solution loaded successfully"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
           }
         }
       }
@@ -714,177 +1231,513 @@
       "TableMetadata": {
         "type": "object",
         "properties": {
-          "id": { "type": "string" },
-          "name": { "type": "string", "example": "customers" },
-          "display_name": { "type": "string", "example": "Customers" },
-          "description": { "type": "string" },
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string",
+            "example": "customers"
+          },
+          "display_name": {
+            "type": "string",
+            "example": "Customers"
+          },
+          "description": {
+            "type": "string"
+          },
           "columns": {
             "type": "array",
-            "items": { "$ref": "#/components/schemas/ColumnMetadata" }
+            "items": {
+              "$ref": "#/components/schemas/ColumnMetadata"
+            }
           },
-          "created_at": { "type": "string", "format": "date-time" },
-          "updated_at": { "type": "string", "format": "date-time" }
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
         }
       },
       "ColumnMetadata": {
         "type": "object",
         "properties": {
-          "id": { "type": "string" },
-          "table_id": { "type": "string" },
-          "name": { "type": "string", "example": "phone_number" },
-          "display_name": { "type": "string", "example": "Phone Number" },
+          "id": {
+            "type": "string"
+          },
+          "table_id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string",
+            "example": "phone_number"
+          },
+          "display_name": {
+            "type": "string",
+            "example": "Phone Number"
+          },
           "field_type": {
             "type": "string",
-            "enum": ["TEXT", "NUMBER", "DATE", "TIMESTAMP", "BOOLEAN", "CONTAINER", "CALCULATION", "SUMMARY"]
+            "enum": [
+              "TEXT",
+              "NUMBER",
+              "DATE",
+              "TIMESTAMP",
+              "BOOLEAN",
+              "CONTAINER",
+              "CALCULATION",
+              "SUMMARY"
+            ]
           },
-          "is_nullable": { "type": "boolean" },
-          "is_primary_key": { "type": "boolean" },
-          "default_value": { "type": "string" },
-          "calculation_formula": { "type": "string" },
-          "validation_rules": { "type": "string" },
-          "created_at": { "type": "string", "format": "date-time" }
+          "is_nullable": {
+            "type": "boolean"
+          },
+          "is_primary_key": {
+            "type": "boolean"
+          },
+          "default_value": {
+            "type": "string"
+          },
+          "calculation_formula": {
+            "type": "string"
+          },
+          "validation_rules": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
         }
       },
       "CreateTableRequest": {
         "type": "object",
-        "required": ["display_name"],
+        "required": [
+          "display_name"
+        ],
         "properties": {
-          "display_name": { "type": "string", "example": "Invoices" },
-          "custom_name": { "type": "string", "example": "invoices" }
+          "display_name": {
+            "type": "string",
+            "example": "Invoices"
+          },
+          "custom_name": {
+            "type": "string",
+            "example": "invoices"
+          }
         }
       },
       "AddColumnRequest": {
         "type": "object",
-        "required": ["name", "display_name", "field_type"],
+        "required": [
+          "name",
+          "display_name",
+          "field_type"
+        ],
         "properties": {
-          "name": { "type": "string", "example": "total_amount" },
-          "display_name": { "type": "string", "example": "Total Amount" },
-          "field_type": { "type": "string", "example": "NUMBER" },
-          "is_nullable": { "type": "boolean", "default": true },
-          "default_value": { "type": "string" },
-          "calculation_formula": { "type": "string" },
-          "validation_rules": { "type": "string" }
+          "name": {
+            "type": "string",
+            "example": "total_amount"
+          },
+          "display_name": {
+            "type": "string",
+            "example": "Total Amount"
+          },
+          "field_type": {
+            "type": "string",
+            "example": "NUMBER"
+          },
+          "is_nullable": {
+            "type": "boolean",
+            "default": true
+          },
+          "default_value": {
+            "type": "string"
+          },
+          "calculation_formula": {
+            "type": "string"
+          },
+          "validation_rules": {
+            "type": "string"
+          }
         }
       },
       "UpdateColumnRequest": {
         "type": "object",
-        "required": ["display_name"],
+        "required": [
+          "display_name"
+        ],
         "properties": {
-          "display_name": { "type": "string", "example": "Invoice Total" },
-          "default_value": { "type": "string", "description": "Auto-enter and storage configuration JSON" },
-          "calculation_formula": { "type": "string", "description": "Formula expression or summary operation JSON" },
-          "validation_rules": { "type": "string", "description": "Validation constraints JSON" }
+          "display_name": {
+            "type": "string",
+            "example": "Invoice Total"
+          },
+          "default_value": {
+            "type": "string",
+            "description": "Auto-enter and storage configuration JSON"
+          },
+          "calculation_formula": {
+            "type": "string",
+            "description": "Formula expression or summary operation JSON"
+          },
+          "validation_rules": {
+            "type": "string",
+            "description": "Validation constraints JSON"
+          }
         }
       },
       "TableOccurrence": {
         "type": "object",
         "properties": {
-          "id": { "type": "string" },
-          "base_table_id": { "type": "string" },
-          "name": { "type": "string", "example": "Customers_Active" },
-          "x_pos": { "type": "number", "example": 100 },
-          "y_pos": { "type": "number", "example": 120 }
+          "id": {
+            "type": "string"
+          },
+          "base_table_id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string",
+            "example": "Customers_Active"
+          },
+          "x_pos": {
+            "type": "number",
+            "example": 100
+          },
+          "y_pos": {
+            "type": "number",
+            "example": 120
+          }
         }
       },
       "Relationship": {
         "type": "object",
         "properties": {
-          "id": { "type": "string" },
-          "name": { "type": "string" },
-          "left_occurrence_id": { "type": "string" },
-          "left_column_id": { "type": "string" },
-          "right_occurrence_id": { "type": "string" },
-          "right_column_id": { "type": "string" },
-          "operator": { "type": "string", "default": "=" },
-          "allow_creation": { "type": "boolean", "default": false },
-          "cascade_delete": { "type": "boolean", "default": false }
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "left_occurrence_id": {
+            "type": "string"
+          },
+          "left_column_id": {
+            "type": "string"
+          },
+          "right_occurrence_id": {
+            "type": "string"
+          },
+          "right_column_id": {
+            "type": "string"
+          },
+          "operator": {
+            "type": "string",
+            "default": "="
+          },
+          "allow_creation": {
+            "type": "boolean",
+            "default": false
+          },
+          "cascade_delete": {
+            "type": "boolean",
+            "default": false
+          }
         }
       },
       "Layout": {
         "type": "object",
         "properties": {
-          "id": { "type": "string" },
-          "name": { "type": "string", "example": "Customer Details" },
-          "table_occurrence_id": { "type": "string" },
-          "definition": { "type": "object", "description": "Deterministic JSON layout schema definition" }
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string",
+            "example": "Customer Details"
+          },
+          "table_occurrence_id": {
+            "type": "string"
+          },
+          "definition": {
+            "type": "object",
+            "description": "Deterministic JSON layout schema definition"
+          }
         }
       },
       "FindRequest": {
         "type": "object",
-        "required": ["criteria"],
+        "required": [
+          "criteria"
+        ],
         "properties": {
           "criteria": {
             "type": "object",
-            "additionalProperties": { "type": "string" }
+            "additionalProperties": {
+              "type": "string"
+            }
           },
-          "omit": { "type": "boolean", "default": false },
-          "limit": { "type": "integer", "default": 100 },
-          "offset": { "type": "integer", "default": 0 }
+          "omit": {
+            "type": "boolean",
+            "default": false
+          },
+          "limit": {
+            "type": "integer",
+            "default": 100
+          },
+          "offset": {
+            "type": "integer",
+            "default": 0
+          }
         }
       },
       "LoginRequest": {
         "type": "object",
-        "required": ["username", "password"],
+        "required": [
+          "database",
+          "username",
+          "password"
+        ],
         "properties": {
-          "username": { "type": "string", "example": "admin" },
-          "password": { "type": "string", "example": "admin123" }
+          "database": {
+            "type": "string",
+            "example": "invoices_db"
+          },
+          "username": {
+            "type": "string",
+            "example": "alice"
+          },
+          "password": {
+            "type": "string",
+            "format": "password"
+          }
         }
       },
       "LoginResponse": {
         "type": "object",
         "properties": {
-          "user": { "$ref": "#/components/schemas/User" },
-          "token": { "type": "string" }
+          "status": {
+            "type": "string",
+            "example": "ok"
+          },
+          "database": {
+            "type": "string"
+          },
+          "user": {
+            "$ref": "#/components/schemas/User"
+          },
+          "token": {
+            "type": "string",
+            "description": "Session bearer token"
+          },
+          "token_type": {
+            "type": "string",
+            "example": "Bearer"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          }
         }
       },
       "User": {
         "type": "object",
         "properties": {
-          "id": { "type": "string" },
-          "username": { "type": "string" },
-          "role": { "type": "string", "enum": ["owner", "admin", "user", "guest"] },
-          "created_at": { "type": "string", "format": "date-time" }
+          "id": {
+            "type": "string"
+          },
+          "username": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "owner",
+              "admin",
+              "user",
+              "guest"
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
         }
       },
       "CreateUserRequest": {
         "type": "object",
-        "required": ["username", "password", "role"],
+        "required": [
+          "username",
+          "password",
+          "role"
+        ],
         "properties": {
-          "username": { "type": "string" },
-          "password": { "type": "string" },
-          "role": { "type": "string", "default": "user" }
+          "username": {
+            "type": "string"
+          },
+          "password": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string",
+            "default": "user"
+          }
         }
       },
       "Permission": {
         "type": "object",
         "properties": {
-          "id": { "type": "string" },
-          "user_id": { "type": "string" },
-          "layout_id": { "type": "string" },
-          "access_level": { "type": "string", "enum": ["no_access", "read_only", "read_write"] }
+          "id": {
+            "type": "string"
+          },
+          "user_id": {
+            "type": "string"
+          },
+          "layout_id": {
+            "type": "string"
+          },
+          "access_level": {
+            "type": "string",
+            "enum": [
+              "no_access",
+              "read_only",
+              "read_write"
+            ]
+          }
         }
       },
       "HealthDiagnostic": {
         "type": "object",
         "properties": {
-          "status": { "type": "string", "example": "pass" },
-          "version": { "type": "string", "example": "0.4.7" },
-          "release_id": { "type": "string", "example": "file4base-api-v0.4.7" },
-          "uptime_seconds": { "type": "integer" },
-          "checks": { "type": "object" }
+          "status": {
+            "type": "string",
+            "example": "pass"
+          },
+          "version": {
+            "type": "string",
+            "example": "0.4.7"
+          },
+          "release_id": {
+            "type": "string",
+            "example": "file4base-api-v0.4.7"
+          },
+          "uptime_seconds": {
+            "type": "integer"
+          },
+          "checks": {
+            "type": "object"
+          }
         }
       },
       "ProblemDetails": {
         "type": "object",
         "description": "RFC 9457 Problem Details for HTTP APIs",
         "properties": {
-          "type": { "type": "string", "example": "about:blank" },
-          "title": { "type": "string", "example": "Bad Request" },
-          "status": { "type": "integer", "example": 400 },
-          "detail": { "type": "string", "example": "Invalid column format" },
-          "instance": { "type": "string", "example": "/api/v1/schemas/tables" }
+          "type": {
+            "type": "string",
+            "example": "about:blank"
+          },
+          "title": {
+            "type": "string",
+            "example": "Bad Request"
+          },
+          "status": {
+            "type": "integer",
+            "example": 400
+          },
+          "detail": {
+            "type": "string",
+            "example": "Invalid column format"
+          },
+          "instance": {
+            "type": "string",
+            "example": "/api/v1/schemas/tables"
+          }
+        }
+      },
+      "CreateDatabaseRequest": {
+        "type": "object",
+        "required": [
+          "database",
+          "user",
+          "password"
+        ],
+        "properties": {
+          "database": {
+            "type": "string",
+            "example": "invoices_db"
+          },
+          "user": {
+            "type": "string",
+            "description": "Username of the first owner account"
+          },
+          "password": {
+            "type": "string",
+            "format": "password",
+            "description": "Password of the first owner account"
+          }
+        }
+      },
+      "DatabaseList": {
+        "type": "object",
+        "properties": {
+          "databases": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "active": {
+            "type": "string",
+            "description": "Database of the caller's session; empty when signed out"
+          }
+        }
+      },
+      "OwnerCredentials": {
+        "type": "object",
+        "properties": {
+          "username": {
+            "type": "string"
+          },
+          "password": {
+            "type": "string",
+            "format": "password"
+          }
+        }
+      }
+    },
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "Opaque session token returned by POST /api/v1/auth/login. Bound to one user and one database; expires after a period of inactivity (SESSION_TTL, default 12h)."
+      }
+    },
+    "responses": {
+      "Unauthorized": {
+        "description": "Missing, invalid or expired session token",
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/ProblemDetails"
+            }
+          }
+        }
+      },
+      "Forbidden": {
+        "description": "The session's role or layout permissions do not allow this operation",
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/ProblemDetails"
+            }
+          }
         }
       }
     }
-  }
+  },
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ]
 }

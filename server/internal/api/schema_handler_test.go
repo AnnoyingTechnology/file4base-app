@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/file4base/file4base-app/server/internal/api"
+	"github.com/file4base/file4base-app/server/internal/auth"
 	"github.com/file4base/file4base-app/server/internal/dbal"
 	"github.com/file4base/file4base-app/server/internal/dbal/postgres"
 	"github.com/file4base/file4base-app/server/internal/schema"
@@ -21,6 +22,35 @@ import (
 
 func init() {
 	dbal.RegisterDialect(dbal.EnginePostgres, func() dbal.Dialect { return postgres.New() })
+}
+
+// asSession emulates AuthMiddleware.Authenticate for handler tests: it binds
+// every request to the given session and database driver.
+func asSession(driver dbal.DatabaseDriver, sess auth.Session) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ctx := dbal.WithDriver(auth.WithSession(r.Context(), sess), driver)
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
+}
+
+func TestSchemaHandler_RejectsRequestsWithoutSession(t *testing.T) {
+	r := chi.NewRouter()
+	api.NewSchemaHandler().RegisterRoutes(r)
+	api.NewDataHandler().RegisterRoutes(r)
+
+	for _, target := range []string{
+		"/api/v1/schemas/tables",
+		"/api/v1/schemas/layouts",
+		"/api/v1/layouts/",
+		"/api/v1/scripts/",
+		"/api/v1/data/sys_users",
+	} {
+		rec := httptest.NewRecorder()
+		r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, target, nil))
+		assert.Equal(t, http.StatusUnauthorized, rec.Code, target)
+	}
 }
 
 func setupTestRouter(t *testing.T) (*chi.Mux, *schema.Service) {
@@ -46,7 +76,8 @@ func setupTestRouter(t *testing.T) (*chi.Mux, *schema.Service) {
 	require.NoError(t, svc.EnsureSystemTables(ctx))
 
 	r := chi.NewRouter()
-	handler := api.NewSchemaHandler(svc)
+	r.Use(asSession(driver, auth.Session{UserID: "test-owner", Username: "owner", Role: auth.RoleOwner, Database: "file4base_dev"}))
+	handler := api.NewSchemaHandler()
 	handler.RegisterRoutes(r)
 
 	return r, svc

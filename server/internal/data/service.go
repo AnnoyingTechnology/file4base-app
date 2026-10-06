@@ -3,6 +3,7 @@ package data
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -43,10 +44,67 @@ func NewService(driver dbal.DatabaseDriver) *Service {
 	return &Service{driver: driver}
 }
 
+// ErrTableNotFound is returned when a request targets a table that is not a
+// user table registered in the system catalog (sys_tables). System tables
+// (sys_*) and any other physical table are never reachable through this service.
+var ErrTableNotFound = errors.New("table not found")
+
+// ErrUnknownField is returned when a request references a field that is not
+// registered for the table in the system catalog (sys_columns).
+var ErrUnknownField = errors.New("unknown field")
+
+// tableFields returns the registered field names of a user table.
+// Every user table owns at least its primary key column, so an empty result
+// means the table is not part of the catalog.
+func (s *Service) tableFields(ctx context.Context, tableName string) (map[string]struct{}, error) {
+	q := `SELECT c.name FROM sys_columns c JOIN sys_tables t ON t.id = c.table_id WHERE t.name = $1`
+	if s.driver.Dialect().Engine() != dbal.EnginePostgres {
+		q = `SELECT c.name FROM sys_columns c JOIN sys_tables t ON t.id = c.table_id WHERE t.name = ?`
+	}
+	rows, err := s.driver.DB().QueryContext(ctx, q, tableName)
+	if err != nil {
+		return nil, fmt.Errorf("failed resolving table %s: %w", tableName, err)
+	}
+	defer rows.Close()
+
+	fields := make(map[string]struct{})
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		fields[name] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(fields) == 0 {
+		return nil, fmt.Errorf("%w: %s", ErrTableNotFound, tableName)
+	}
+	return fields, nil
+}
+
+func checkField(fields map[string]struct{}, tableName, fieldName string) error {
+	if _, ok := fields[fieldName]; !ok {
+		return fmt.Errorf("%w: %s.%s", ErrUnknownField, tableName, fieldName)
+	}
+	return nil
+}
+
 // InsertRow dynamically inserts a record into any table
 func (s *Service) InsertRow(ctx context.Context, tableName string, record map[string]interface{}) (map[string]interface{}, error) {
 	if record == nil {
 		record = make(map[string]interface{})
+	}
+
+	fields, err := s.tableFields(ctx, tableName)
+	if err != nil {
+		return nil, err
+	}
+	for col := range record {
+		if err := checkField(fields, tableName, col); err != nil {
+			return nil, err
+		}
 	}
 
 	// Ensure id exists
@@ -84,6 +142,9 @@ func (s *Service) InsertRow(ctx context.Context, tableName string, record map[st
 
 // GetRow retrieves a single record by primary key id
 func (s *Service) GetRow(ctx context.Context, tableName string, id string) (map[string]interface{}, error) {
+	if _, err := s.tableFields(ctx, tableName); err != nil {
+		return nil, err
+	}
 	dialect := s.driver.Dialect()
 	sqlQuery := fmt.Sprintf(
 		"SELECT * FROM %s WHERE %s = %s LIMIT 1",
@@ -111,7 +172,16 @@ func (s *Service) GetRow(ctx context.Context, tableName string, id string) (map[
 
 // UpdateRow dynamically updates a row by id
 func (s *Service) UpdateRow(ctx context.Context, tableName string, id string, updates map[string]interface{}) (map[string]interface{}, error) {
+	fields, err := s.tableFields(ctx, tableName)
+	if err != nil {
+		return nil, err
+	}
 	delete(updates, "id") // Protect primary key from alteration
+	for col := range updates {
+		if err := checkField(fields, tableName, col); err != nil {
+			return nil, err
+		}
+	}
 	if len(updates) == 0 {
 		return s.GetRow(ctx, tableName, id)
 	}
@@ -152,6 +222,9 @@ func (s *Service) UpdateRow(ctx context.Context, tableName string, id string, up
 
 // DeleteRow removes a record by primary key id
 func (s *Service) DeleteRow(ctx context.Context, tableName string, id string) error {
+	if _, err := s.tableFields(ctx, tableName); err != nil {
+		return err
+	}
 	dialect := s.driver.Dialect()
 	sqlQuery := fmt.Sprintf(
 		"DELETE FROM %s WHERE %s = %s",
@@ -175,6 +248,18 @@ func (s *Service) DeleteRow(ctx context.Context, tableName string, id string) er
 
 // ListRows retrieves rows with optional sorting and pagination
 func (s *Service) ListRows(ctx context.Context, tableName string, opts QueryOptions) ([]map[string]interface{}, error) {
+	fields, err := s.tableFields(ctx, tableName)
+	if err != nil {
+		return nil, err
+	}
+	if opts.SortBy != "" {
+		if err := checkField(fields, tableName, opts.SortBy); err != nil {
+			return nil, err
+		}
+	}
+	if opts.Offset < 0 {
+		opts.Offset = 0
+	}
 	dialect := s.driver.Dialect()
 	limit := opts.Limit
 	if limit <= 0 || limit > 1000 {
@@ -291,6 +376,14 @@ func (s *Service) ExecuteFind(ctx context.Context, tableName string, requests []
 		return s.ListRows(ctx, tableName, opts)
 	}
 
+	fields, err := s.tableFields(ctx, tableName)
+	if err != nil {
+		return nil, err
+	}
+	if opts.Offset < 0 {
+		opts.Offset = 0
+	}
+
 	dialect := s.driver.Dialect()
 	var orClauses []string
 	var values []interface{}
@@ -317,6 +410,9 @@ func (s *Service) ExecuteFind(ctx context.Context, tableName string, requests []
 				}
 			}
 
+			if err := checkField(fields, tableName, crit.FieldName); err != nil {
+				return nil, err
+			}
 			colIdent := dialect.QuoteIdentifier(crit.FieldName)
 
 			switch crit.Operator {

@@ -117,7 +117,7 @@ class _DatabaseLoginDialogState extends State<DatabaseLoginDialog> {
       final pkg = SolutionPackage.fromMsgPack(picked.bytes);
       final targetDb = pkg.databaseConnection.database;
 
-      // Ensure database exists or create it
+      // Ensure database exists or create it (creation provisions the packaged owner account)
       try {
         await widget.apiClient.switchDatabase(targetDb);
       } catch (_) {
@@ -127,27 +127,6 @@ class _DatabaseLoginDialogState extends State<DatabaseLoginDialog> {
             user: pkg.databaseConnection.user,
             password: pkg.databaseConnection.password,
           );
-        } catch (_) {}
-      }
-
-      // Synchronize solution users into the database if packaged
-      if (pkg.users.isNotEmpty) {
-        try {
-          final currentUsers = await widget.apiClient.listUsers(database: targetDb);
-          for (final u in pkg.users) {
-            final uname = u['username']?.toString() ?? '';
-            if (uname.isNotEmpty && !currentUsers.any((cu) => cu.username.toLowerCase() == uname.toLowerCase())) {
-              final role = u['role']?.toString() ?? 'user';
-              try {
-                await widget.apiClient.createUser(
-                  username: uname,
-                  password: pkg.databaseConnection.password,
-                  role: role,
-                  database: targetDb,
-                );
-              } catch (_) {}
-            }
-          }
         } catch (_) {}
       }
 
@@ -172,6 +151,31 @@ class _DatabaseLoginDialogState extends State<DatabaseLoginDialog> {
           _errorMessage = 'Solution "${pkg.solutionName}" loaded. Please enter the password for database "$targetDb".';
         });
         return;
+      }
+
+      // Synchronize solution users into the database if packaged. Managing
+      // accounts requires a signed-in owner or admin, so this runs after login.
+      if (pkg.users.isNotEmpty && auth.user.isAdmin) {
+        try {
+          final currentUsers = await widget.apiClient.listUsers(database: targetDb);
+          for (final u in pkg.users) {
+            final uname = u['username']?.toString() ?? '';
+            if (uname.isNotEmpty && !currentUsers.any((cu) => cu.username.toLowerCase() == uname.toLowerCase())) {
+              var role = u['role']?.toString() ?? 'user';
+              if (role == 'owner' && !auth.user.isOwner) {
+                role = 'admin';
+              }
+              try {
+                await widget.apiClient.createUser(
+                  username: uname,
+                  password: pkg.databaseConnection.password,
+                  role: role,
+                  database: targetDb,
+                );
+              } catch (_) {}
+            }
+          }
+        } catch (_) {}
       }
 
       if (mounted) {
@@ -206,7 +210,7 @@ class _DatabaseLoginDialogState extends State<DatabaseLoginDialog> {
       if (database == null || database.isEmpty) {
         setState(() {
           _isLoggingIn = false;
-          _errorMessage = 'No hay bases de datos disponibles. Pulsa el botón "+" para crear una nueva base de datos.';
+          _errorMessage = 'No databases are available. Select the "+" button to create a database.';
         });
         return;
       }
@@ -343,7 +347,7 @@ class _DatabaseLoginDialogState extends State<DatabaseLoginDialog> {
                                     border: const OutlineInputBorder(),
                                     isDense: true,
                                     prefixIcon: const Icon(Icons.dataset_outlined, size: 20),
-                                    hintText: _databases.isEmpty ? 'Ninguna base de datos disponible' : 'Selecciona una base de datos',
+                                    hintText: _databases.isEmpty ? 'No databases available' : 'Select a database',
                                   ),
                                   items: _databases.map((db) {
                                     return DropdownMenuItem<String>(

@@ -3,6 +3,7 @@ package schema_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 
@@ -35,19 +36,33 @@ func TestSecurityService(t *testing.T) {
 	svc := schema.NewService(driver)
 	require.NoError(t, svc.EnsureSystemTables(ctx))
 
-	// 1. Authenticate default owner (matches database name and password)
-	authUser, err := svc.Authenticate(ctx, "file4base_dev", "file4base_dev")
+	// EnsureSystemTables never provisions accounts on its own
+	ownerName := fmt.Sprintf("sec_owner_%d", time.Now().UnixNano()%1000000)
+	_, errNoDefault := svc.Authenticate(ctx, "admin", "admin")
+	if errNoDefault == nil {
+		t.Log("an 'admin/admin' account already exists in this development database (created by an older version)")
+	}
+
+	// 1. Provision an owner explicitly and authenticate with it
+	require.NoError(t, svc.EnsureSystemTablesWithCredentials(ctx, ownerName, "owner-secret"))
+	defer func() {
+		_, _ = driver.DB().ExecContext(context.Background(), `DELETE FROM sys_users WHERE LOWER(username) = LOWER($1)`, ownerName)
+	}()
+	authUser, err := svc.Authenticate(ctx, ownerName, "owner-secret")
 	require.NoError(t, err)
-	assert.Equal(t, "file4base_dev", authUser.Username)
+	assert.Equal(t, ownerName, authUser.Username)
 	assert.Equal(t, "owner", authUser.Role)
 
-	// 1b. Authenticate with empty username and owner password (database password access)
-	authByPassOnly, err := svc.Authenticate(ctx, "", "file4base_dev")
-	require.NoError(t, err)
-	assert.Equal(t, "owner", authByPassOnly.Role)
+	// 1b. The owner password alone is not enough: the username must match too
+	_, errNoUser := svc.Authenticate(ctx, "", "owner-secret")
+	assert.Error(t, errNoUser)
+	_, errOtherUser := svc.Authenticate(ctx, "someone_else", "owner-secret")
+	assert.ErrorIs(t, errOtherUser, schema.ErrInvalidCredentials)
+	_, errWrongPass := svc.Authenticate(ctx, ownerName, "wrong")
+	assert.ErrorIs(t, errWrongPass, schema.ErrInvalidCredentials)
 
 	// 1c. Empty password must fail
-	_, errEmptyPass := svc.Authenticate(ctx, "file4base_dev", "")
+	_, errEmptyPass := svc.Authenticate(ctx, ownerName, "")
 	assert.Error(t, errEmptyPass)
 	assert.Contains(t, errEmptyPass.Error(), "password is required")
 
@@ -98,12 +113,23 @@ func TestSecurityService(t *testing.T) {
 	require.Len(t, authEditorWithPerms.Permissions, 1)
 	assert.Equal(t, "read_only", authEditorWithPerms.Permissions[0].AccessLevel)
 
-	// 8. Prevent deleting the only owner
-	_, _ = driver.DB().ExecContext(ctx, `DELETE FROM sys_users WHERE role = 'owner' AND id != $1`, authUser.ID)
-	err = svc.DeleteUser(ctx, authUser.ID)
-	assert.Error(t, err)
-	if err != nil {
+	// 7b. An explicit "none" is stored (a missing row would default to read_write)
+	require.NoError(t, svc.SetUserPermissions(ctx, user.ID, []schema.UserLayoutPermission{{LayoutID: layout.ID, AccessLevel: "none"}}))
+	level, err := svc.LayoutAccess(ctx, user.ID, layout.ID)
+	require.NoError(t, err)
+	assert.Equal(t, schema.AccessNone, level)
+	assert.Error(t, svc.SetUserPermissions(ctx, user.ID, []schema.UserLayoutPermission{{LayoutID: layout.ID, AccessLevel: "superuser"}}))
+
+	// 8. The last active owner can be neither deleted, demoted nor deactivated
+	var owners int
+	require.NoError(t, driver.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM sys_users WHERE role = 'owner' AND COALESCE(is_active, TRUE) = TRUE`).Scan(&owners))
+	if owners == 1 {
+		err = svc.DeleteUser(ctx, authUser.ID)
+		require.Error(t, err)
 		assert.Contains(t, err.Error(), "only owner")
+		assert.Error(t, svc.UpdateUser(ctx, authUser.ID, "", "user"))
+		inactive := false
+		assert.Error(t, svc.UpdateUser(ctx, authUser.ID, "", "owner", &inactive))
 	}
 
 	// 9. Deleting editor user succeeds

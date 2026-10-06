@@ -36,6 +36,50 @@ When an error occurs (HTTP 4xx or 5xx), the response body is encoded as `applica
 
 ---
 
+## Authentication & Authorization
+
+Every endpoint requires a session, except the health probes, Swagger UI, `POST /api/v1/auth/login` and the database selector endpoints used before sign-in (`GET /api/v1/databases`, `POST /api/v1/databases`, `POST /api/v1/databases/switch`).
+
+1. Sign in with `POST /api/v1/auth/login`. The response carries an opaque `token`.
+2. Send it on every request: `Authorization: Bearer <token>`.
+3. Sign out with `POST /api/v1/auth/logout`.
+
+**A session is bound to one user and one database.** All schema, data, security and solution endpoints operate on the database the session signed in to. The server has no global "active database": two clients signed in to different databases never affect each other. A request that names another database (`?database=` or `X-Database-Name`) is rejected with `403`.
+
+Sessions live in server memory, expire after `SESSION_TTL` of inactivity (default `12h`) and do not survive a server restart. Changing a user's password or role, deactivating or deleting the user, or dropping the database revokes the affected sessions immediately.
+
+| Status | Meaning |
+|---|---|
+| `401 Unauthorized` | Missing, invalid, expired or revoked token. Sign in again. |
+| `403 Forbidden` | The session's role or layout permissions do not allow the operation. |
+
+### Roles
+
+| Capability | `owner` | `admin` | `user` |
+|---|---|---|---|
+| Read the schema catalog (tables, occurrences, relationships, layouts, scripts) | yes | yes | yes (layouts with `none` access are hidden) |
+| Create / change / delete tables, fields, occurrences, relationships, scripts; create / delete layouts | yes | yes | no |
+| Save an existing layout (`PUT /layouts/{id}`) | yes | yes | only with `read_write` on that layout |
+| Record CRUD and Find (`/api/v1/data/{table}`) | yes | yes | according to layout permissions (see below) |
+| List / create / update / delete users, set layout permissions | yes | yes, except owner accounts | own password only |
+| Export solution, export / import data | yes | yes | no |
+| Import solution (may create accounts) | yes | no | no |
+| Drop the database | yes | no | no |
+
+### Layout permissions on the data API
+Permissions are granted per layout (`read_write`, `read_only`, `none`), while the data API works on tables. For a `user`, the level on a table is the most permissive level across all layouts built on that table. A layout without an explicit permission row counts as `read_write`, and so does a table without layouts. `none` blocks reads and writes; `read_only` blocks inserts, updates and deletes.
+
+### Server configuration
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `DATABASE_URL` | local development DSN | Connection to the engine's administrative database. Always set it outside development. |
+| `SESSION_TTL` | `12h` | Idle lifetime of a session (Go duration). |
+| `CORS_ALLOWED_ORIGINS` | `*` | Comma-separated list of browser origins allowed to call the API. |
+| `ALLOW_PUBLIC_DATABASE_CREATION` | `true` | When `false`, only a signed-in owner can create databases. |
+
+---
+
 ## 1. Documentation & Swagger UI
 
 ### `GET /swagger/`
@@ -353,6 +397,8 @@ Deletes a layout.
 
 ## 4. Dynamic Data & Find Mode
 
+> Only user tables registered in the catalog are reachable. System tables (`sys_*`) and any other physical table answer `404 Table Not Found`, for every role. Field names (`sort_by`, record keys, find criteria) must be fields registered for the table; unknown fields answer `400 Unknown Field`.
+
 ### `GET /api/v1/data/{table}`
 Queries rows with optional pagination and sorting.
 
@@ -418,29 +464,34 @@ Supported operators: `=`, `!=`, `>`, `<`, `>=`, `<=`, `LIKE`, `RANGE`.
 ## 5. Multi-Database Management
 
 ### `GET /api/v1/databases`
-Lists all available user databases on the PostgreSQL server and indicates the current active database.
+*Public.* Lists the solution databases on the server (engine-internal databases such as `postgres` are never listed). `active` is the database of the caller's own session, or an empty string when the request carries no session.
 
 #### Response `200 OK`
 ```json
 {
   "databases": [
-    "file4base_dev",
     "invoices_db",
     "contacts_db"
   ],
-  "active": "file4base_dev"
+  "active": "invoices_db"
 }
 ```
 
 ---
 
 ### `POST /api/v1/databases`
-Creates a new physical database in PostgreSQL and initializes the system catalog tables (`sys_*`).
+Creates a new physical database, initializes the system catalog tables (`sys_*`) and provisions its first `owner` account with the credentials in the request. There are no default accounts: `user` and `password` are mandatory.
+
+*Public* while `ALLOW_PUBLIC_DATABASE_CREATION=true` (default, needed by the desktop "New Database" flow, which runs before sign-in). With `false`, it requires an `owner` session.
+
+An existing database is never modified: if the name is taken the response is `409 Conflict`.
 
 #### Request Body
 ```json
 {
-  "database": "invoices_db"
+  "database": "invoices_db",
+  "user": "alice",
+  "password": "a-strong-password"
 }
 ```
 
@@ -449,14 +500,19 @@ Creates a new physical database in PostgreSQL and initializes the system catalog
 {
   "database": "invoices_db",
   "status": "created",
-  "active": "invoices_db"
+  "owner_user": "alice",
+  "active": ""
 }
 ```
 
+#### Errors
+- `409 Conflict`: a database with that name already exists.
+- `422 Unprocessable Entity`: missing database name, owner user or owner password.
+
 ---
 
-### `POST /api/v1/databases/switch`
-Switches the active database context for future schema and data operations.
+### `POST /api/v1/databases/switch` *(deprecated)*
+*Public.* Kept for backwards compatibility. It no longer switches anything: it only reports whether the database exists (`404` otherwise). To work on another database, sign in to it with `POST /api/v1/auth/login`.
 
 #### Request Body
 ```json
@@ -468,8 +524,33 @@ Switches the active database context for future schema and data operations.
 #### Response `200 OK`
 ```json
 {
-  "active": "invoices_db",
-  "status": "connected"
+  "database": "invoices_db",
+  "active": "",
+  "status": "available"
+}
+```
+
+---
+
+### `DELETE /api/v1/databases/{name}`
+Drops a database and revokes every session bound to it. The caller must prove ownership of the database being dropped:
+- the session is an `owner` session on that same database, **or**
+- the request body carries the credentials of one of its owners.
+
+#### Request Body (only when dropping a database other than the session's)
+```json
+{
+  "username": "bob",
+  "password": "owner-password-of-that-database"
+}
+```
+
+#### Response `200 OK`
+```json
+{
+  "database": "old_db",
+  "status": "deleted",
+  "active": "invoices_db"
 }
 ```
 
@@ -483,9 +564,11 @@ Packages the active solution (layouts, schemas, table occurrences, relationships
 #### Query Parameters
 - `name` (string, optional, default: `file4base_solution`)
 - `host` (string, optional, default: `localhost`)
-- `port` (integer, optional, default: `5432`)
-- `user` (string, optional, default: `file4base`)
-- `password` (string, optional, default: `dev_password`)
+- `port` (integer, optional, default: `5432`, or `3306` on MariaDB)
+- `user` (string, optional, default: empty)
+- `password` (string, optional, default: empty)
+
+Requires the `owner` or `admin` role. The connection parameters are only stored inside the exported file; nothing is filled in by default.
 
 #### Response `200 OK`
 - `Content-Type: application/x-msgpack`
@@ -541,46 +624,82 @@ Binary MessagePack payload (`Content-Type: application/x-msgpack`).
 ## 7. Authentication & Security Management
 
 ### `POST /api/v1/auth/login`
-Authenticates a user with username and password, optionally switching active database context.
+*Public.* Authenticates a user against one database and opens a session bound to that database. `database`, `username` and `password` are all required, and the username and password must belong to the same account.
+
+Signing in never initializes a database or creates accounts.
 
 #### Request Body
 ```json
 {
-  "username": "admin",
-  "password": "admin",
-  "database": "file4base_dev"
+  "username": "alice",
+  "password": "a-strong-password",
+  "database": "invoices_db"
 }
 ```
 
 #### Response `200 OK`
 ```json
 {
-  "status": "authenticated",
+  "status": "ok",
+  "database": "invoices_db",
   "user": {
     "id": "u-0001",
-    "username": "admin",
-    "role": "owner"
+    "username": "alice",
+    "role": "owner",
+    "is_active": true,
+    "permissions": []
   },
-  "database": "file4base_dev"
+  "token": "5f1c…64 hex characters",
+  "token_type": "Bearer",
+  "expires_at": "2026-10-06T20:00:00Z"
+}
+```
+
+#### Errors
+- `401 Unauthorized`: invalid username or password, deactivated account, or the database has no File4Base catalog.
+- `404 Not Found`: the database does not exist.
+- `422 Unprocessable Entity`: `database` is missing.
+
+---
+
+### `POST /api/v1/auth/logout`
+Revokes the session of the bearer token. Response `204 No Content`.
+
+---
+
+### `GET /api/v1/auth/session`
+Returns the user, role, layout permissions and database of the current session.
+
+#### Response `200 OK`
+```json
+{
+  "database": "invoices_db",
+  "user": {
+    "id": "u-0001",
+    "username": "alice",
+    "role": "owner",
+    "is_active": true,
+    "permissions": []
+  },
+  "expires_at": "2026-10-06T20:00:00Z"
 }
 ```
 
 ---
 
 ### `GET /api/v1/security/users`
-Lists all user accounts in the specified database (via `?database=<name>` query param, `X-Database-Name` header, or active database fallback). User accounts are strictly isolated per database.
+Lists the user accounts of the session's database. Requires the `owner` or `admin` role. User accounts are strictly isolated per database.
 
-#### Query Parameters
-- `database` (optional, string): Name of the database/catalog to query users from.
+The `?database=<name>` query parameter and the `X-Database-Name` header are still accepted for compatibility, but they must name the session's own database; any other value answers `403`.
 
-#### Headers
-- `X-Database-Name` (optional, string): Alternative database header.
+#### Response `200 OK`
 ```json
 [
   {
     "id": "u-0001",
-    "username": "file4base_dev",
+    "username": "alice",
     "role": "owner",
+    "is_active": true,
     "created_at": "2026-09-23T10:00:00Z",
     "updated_at": "2026-09-23T10:00:00Z"
   }
@@ -590,7 +709,7 @@ Lists all user accounts in the specified database (via `?database=<name>` query 
 ---
 
 ### `POST /api/v1/security/users`
-Creates a new user account with hashed password (`bcrypt`).
+Creates a new user account with hashed password (`bcrypt`). Requires the `owner` or `admin` role; only an `owner` can create another `owner`.
 
 #### Request Body
 ```json
@@ -615,7 +734,13 @@ Creates a new user account with hashed password (`bcrypt`).
 ---
 
 ### `PUT /api/v1/security/users/{id}`
-Updates password and/or role of an existing user account.
+Updates password, role and/or `is_active` of an existing user account.
+
+- `owner`: any account.
+- `admin`: `admin` and `user` accounts; cannot modify owner accounts nor promote to `owner`.
+- `user`: only their own password (role and status must stay unchanged).
+
+The last active owner cannot be demoted or deactivated. When the password, role or status changes, the other sessions of that user are revoked.
 
 #### Request Body
 ```json
@@ -628,12 +753,12 @@ Updates password and/or role of an existing user account.
 ---
 
 ### `DELETE /api/v1/security/users/{id}`
-Deletes a user account. Cannot delete the only remaining owner account.
+Deletes a user account and revokes its sessions. Requires the `owner` or `admin` role (only an `owner` can delete an owner). You cannot delete your own account nor the only remaining owner account.
 
 ---
 
 ### `GET /api/v1/security/users/{id}/permissions`
-Retrieves granular per-layout permissions for a user.
+Retrieves granular per-layout permissions for a user. Admins can read anyone's; a `user` can only read their own.
 
 #### Response `200 OK`
 ```json
@@ -652,7 +777,7 @@ Retrieves granular per-layout permissions for a user.
 ---
 
 ### `PUT /api/v1/security/users/{id}/permissions`
-Saves per-layout permissions for a user.
+Replaces the per-layout permissions of a user. Requires the `owner` or `admin` role. `access_level` is one of `read_write`, `read_only`, `none`; every level is stored explicitly (a layout without a row defaults to `read_write`).
 
 #### Request Body
 ```json

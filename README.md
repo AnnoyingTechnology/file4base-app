@@ -3,7 +3,7 @@
 File4Base is an open-source, modern alternative to database and layout editors, built with a decoupled Go backend and Flutter desktop frontend.
 
 ## Architecture Highlights
-- **Backend (Go 1.22+)**: REST & WebSockets, Clean Architecture, `pgx/v5`, PostgreSQL 16.
+- **Backend (Go 1.26+)**: REST API with per-database sessions and role-based authorization, Clean Architecture, `pgx/v5`, PostgreSQL 16. Real-time WebSocket sync is planned (Roadmap Phase 6).
 - **Frontend (Flutter Desktop)**: Native desktop application targeting macOS (Apple Silicon M-series & Intel), Windows, and Linux.
 - **Environment & Preflight Engine**: Automated startup check verifying Docker presence, daemon state, and host architecture, with direct download and auto-launch prompts.
 - **Data Persistence**: Relational storage in PostgreSQL/MariaDB running locally in Docker with dynamic schema metadata tables.
@@ -20,16 +20,28 @@ File4Base is an open-source, modern alternative to database and layout editors, 
 - [Menu Bar & Functional Command Reference](docs/specs/file4base_menu_reference_guide.md)
 
 
+## Security Model
+- **Sessions**: `POST /api/v1/auth/login` returns a bearer token bound to one user and one database. Every schema, data, security and solution endpoint requires it; only the health probes, Swagger UI, sign-in and the database selector are public.
+- **Per-session database**: the server keeps no global "active database". Two clients signed in to different databases never affect each other.
+- **Roles enforced by the server**: `owner`, `admin` and `user`, plus per-layout permissions (`read_write`, `read_only`, `none`) that also govern record access through the data API.
+- **No default accounts**: a database gets its first owner with the credentials chosen when it is created.
+- **Configuration** (environment variables of the API server): `DATABASE_URL`, `SESSION_TTL` (default `12h`), `CORS_ALLOWED_ORIGINS` (default `*`), `ALLOW_PUBLIC_DATABASE_CREATION` (default `true`; set to `false` on shared servers).
+
+Details: [REST API Reference - Authentication & Authorization](docs/api/API_REFERENCE.md#authentication--authorization).
+
 ## Execution Modalities
 
 ### 1. Server Deployment (Docker Compose)
 When launched via Docker Compose, File4Base acts as a full multi-user application server:
-- **PostgreSQL 16**: Port `5432` (or MariaDB via `--profile mariadb`)
+- **PostgreSQL 16**: Port `5432`, published on `127.0.0.1` only by default (or MariaDB via `--profile mariadb`)
 - **Backend Core API (Go)**: Port `8080` (`/healthz`, `/api/v1/schemas`, `/api/v1/data`)
 - **WebDirect Web Client (Nginx)**: Port `3000` (browser-accessible client)
 
 ```bash
-# Start complete File4Base server stack
+# Optional: set your own database password and server options
+cp .env.example .env
+
+# Start complete File4Base server stack (builds the API and the web client images)
 docker compose up -d
 
 # Check server health
@@ -38,6 +50,14 @@ curl http://localhost:8080/healthz
 # Access web application
 open http://localhost:3000
 ```
+
+On a new Docker volume, PostgreSQL starts with its administrative `postgres`
+database and no File4Base solution database. Create a solution database from
+the client's database login screen or import a `.f4p` solution. Docker's
+`POSTGRES_DB` setting only applies when PostgreSQL initializes an empty data
+volume: existing volumes keep their databases and data, which remain available
+in the database selector. Do not remove a volume to change this behavior unless
+you intend to delete its persisted data.
 
 ### 2. Standalone Desktop Client (macOS / Windows / Linux)
 The native desktop client runs locally on developer workstations (including Apple Silicon M-series Macs, Windows, and Linux):
@@ -57,4 +77,4 @@ flutter run -d macos    # or windows, linux
 ```
 
 ### 3. Automated CI/CD Workflows
-A GitHub Actions workflow (`.github/workflows/desktop_release.yml`) automatically compiles and packages native release builds for macOS, Windows, and Linux on every release tag or workflow dispatch.
+A GitHub Actions workflow (`.github/workflows/desktop_release.yml`) runs the Go server checks (`go vet` and the test suite against a PostgreSQL service) and the Flutter tests, and automatically compiles and packages native release builds for macOS, Windows, and Linux on every release tag or workflow dispatch.

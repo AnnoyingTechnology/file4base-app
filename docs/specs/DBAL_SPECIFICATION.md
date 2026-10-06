@@ -3,7 +3,7 @@
 ## 1. Vision & Concept
 
 File4Base aims to replicate the unified, integrated database experience of **File4base Pro** (database engine + UI builder + business logic) using an open modern stack:
-- **Backend**: Go (1.22+) implementing a database-agnostic metadata engine, DBAL/query builder, and generic CRUD/DDL handlers.
+- **Backend**: Go (1.26+) implementing a database-agnostic metadata engine, DBAL/query builder, and generic CRUD/DDL handlers.
 - **Frontend**: Flutter (desktop target: macOS/Windows/Linux) providing a visual schema designer (Relationship Graph), Drag-and-Drop Form/Layout builder, and block-based Script Workspace.
 - **Primary Database Engine**: PostgreSQL 16+.
 - **Secondary / Swappable Engines**: MariaDB / MySQL 8.0+, SQLite (embedded / single-file offline mode).

@@ -24,7 +24,7 @@ class DatabaseConnectionConfig {
     this.port = 5432,
     required this.database,
     this.user = 'file4base',
-    this.password = 'dev_password',
+    this.password = '',
     this.sslMode = 'disable',
   });
 
@@ -71,7 +71,7 @@ class DatabaseConnectionConfig {
 
   factory DatabaseConnectionConfig.fromMap(Map<dynamic, dynamic> map) {
     final rawUser = map['user']?.toString() ?? 'file4base';
-    final rawPassword = map['password']?.toString() ?? 'dev_password';
+    final rawPassword = map['password']?.toString() ?? '';
 
     return DatabaseConnectionConfig(
       engine: map['engine']?.toString() ?? 'postgres',

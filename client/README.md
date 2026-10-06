@@ -1,17 +1,23 @@
-# file4base_client
+# File4Base Flutter Client
 
-A new Flutter project.
+The Flutter client provides the File4Base desktop application for macOS,
+Windows, and Linux, plus the WebDirect interface served by Nginx. The client
+uses the Go REST API described in the repository's [API reference](../docs/api/API_REFERENCE.md).
 
-## Getting Started
+## Run the client
 
-This project is a starting point for a Flutter application.
+Install Flutter for your platform, then run:
 
-A few resources to get you started if this is your first Flutter project:
+```sh
+cd client
+flutter pub get
+flutter run -d macos # Use windows or linux for those desktop targets.
+```
 
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
+The default API endpoint is `http://localhost:8080`. Start the backend and its
+database with Docker Compose from the repository root, or configure a reachable
+server in the client connection settings.
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+For repository setup, Docker deployment, desktop packaging, and project
+architecture, see the [root README](../README.md) and
+[architecture specification](../docs/specs/ARCHITECTURE.md).

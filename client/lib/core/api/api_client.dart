@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
 import 'dart:typed_data';
@@ -440,6 +441,9 @@ class AuthResult {
   final String status;
   final String database;
   final UserModel user;
+
+  /// Bearer token of the session opened by the server for this sign-in.
+  final String? token;
   final String? fileName;
   final String? solutionName;
   final dynamic directoryRef;
@@ -448,6 +452,7 @@ class AuthResult {
     required this.status,
     required this.database,
     required this.user,
+    this.token,
     this.fileName,
     this.solutionName,
     this.directoryRef,
@@ -458,6 +463,7 @@ class AuthResult {
       status: json['status'] as String? ?? 'ok',
       database: json['database'] as String? ?? '',
       user: UserModel.fromJson(json['user'] as Map<String, dynamic>),
+      token: json['token'] as String?,
       fileName: json['file_name'] as String?,
       solutionName: json['solution_name'] as String?,
     );
@@ -467,6 +473,7 @@ class AuthResult {
     String? status,
     String? database,
     UserModel? user,
+    String? token,
     String? fileName,
     String? solutionName,
     dynamic directoryRef,
@@ -475,6 +482,7 @@ class AuthResult {
       status: status ?? this.status,
       database: database ?? this.database,
       user: user ?? this.user,
+      token: token ?? this.token,
       fileName: fileName ?? this.fileName,
       solutionName: solutionName ?? this.solutionName,
       directoryRef: directoryRef ?? this.directoryRef,
@@ -486,10 +494,29 @@ class ApiClient {
   final String baseUrl;
   final http.Client _httpClient;
 
+  /// Bearer token of the current server session (set by [login]).
+  /// It is kept in memory only and sent on every request.
+  String? _authToken;
+
+  /// Invoked when the server answers 401 to a request other than sign-in,
+  /// i.e. the session expired or was revoked and the user must sign in again.
+  void Function()? onUnauthorized;
+
   ApiClient({
     this.baseUrl = 'http://localhost:8080',
     http.Client? httpClient,
   }) : _httpClient = httpClient ?? http.Client();
+
+  /// Whether this client currently holds a session token.
+  bool get isAuthenticated => _authToken != null && _authToken!.isNotEmpty;
+
+  /// The current session token, if any.
+  String? get authToken => _authToken;
+
+  /// Drops the session token locally without contacting the server.
+  void clearSession() {
+    _authToken = null;
+  }
 
   Map<String, String> _headers({Map<String, String>? extra, String? contentType}) {
     final trace = TraceContext.create();
@@ -497,6 +524,10 @@ class ApiClient {
       'Accept': 'application/json',
       ...trace.toHeaders(),
     };
+    final token = _authToken;
+    if (token != null && token.isNotEmpty) {
+      headers['Authorization'] = 'Bearer $token';
+    }
     if (contentType != null) {
       headers['Content-Type'] = contentType;
     }
@@ -506,7 +537,12 @@ class ApiClient {
     return headers;
   }
 
-  void _checkResponse(http.Response response) {
+  void _checkResponse(http.Response response, {bool isSignIn = false}) {
+    if (response.statusCode == 401 && !isSignIn) {
+      // The session expired or was revoked on the server
+      _authToken = null;
+      onUnauthorized?.call();
+    }
     if (response.statusCode >= 400) {
       throw ApiException.fromResponse(response);
     }
@@ -951,10 +987,14 @@ class ApiClient {
     return jsonDecode(response.body) as Map<String, dynamic>;
   }
 
-  Future<Map<String, dynamic>> deleteDatabase(String name) async {
+  /// Drops a database. Unless the current session is an owner session on that
+  /// same database, the server requires the credentials of one of its owners.
+  Future<Map<String, dynamic>> deleteDatabase(String name, {String? ownerUsername, String? ownerPassword}) async {
+    final hasCredentials = ownerUsername != null && ownerUsername.isNotEmpty && ownerPassword != null && ownerPassword.isNotEmpty;
     final response = await _httpClient.delete(
       Uri.parse('$baseUrl/api/v1/databases/${Uri.encodeComponent(name)}'),
-      headers: _headers(),
+      headers: _headers(contentType: hasCredentials ? 'application/json' : null),
+      body: hasCredentials ? jsonEncode({'username': ownerUsername, 'password': ownerPassword}) : null,
     );
     _checkResponse(response);
     return jsonDecode(response.body) as Map<String, dynamic>;
@@ -1019,8 +1059,42 @@ class ApiClient {
         'database': database ?? '',
       }),
     );
-    _checkResponse(response);
-    return AuthResult.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+    _checkResponse(response, isSignIn: true);
+    final result = AuthResult.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+
+    // Every later request runs under the session that was just opened. A
+    // session replaced by a new sign-in is closed on the server as well.
+    final previousToken = _authToken;
+    _authToken = result.token;
+    if (previousToken != null && previousToken.isNotEmpty && previousToken != result.token) {
+      unawaited(_revokeToken(previousToken));
+    }
+    return result;
+  }
+
+  /// Signs out: closes the server session and forgets the token.
+  Future<void> logout() async {
+    final token = _authToken;
+    _authToken = null;
+    if (token != null && token.isNotEmpty) {
+      await _revokeToken(token);
+    }
+  }
+
+  Future<void> _revokeToken(String token) async {
+    try {
+      final trace = TraceContext.create();
+      await _httpClient.post(
+        Uri.parse('$baseUrl/api/v1/auth/logout'),
+        headers: <String, String>{
+          'Accept': 'application/json',
+          'Authorization': 'Bearer $token',
+          ...trace.toHeaders(),
+        },
+      );
+    } catch (_) {
+      // Best effort: the session also expires on its own
+    }
   }
 
   Future<List<UserModel>> listUsers({String? database}) async {

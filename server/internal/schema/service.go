@@ -65,12 +65,16 @@ func NewService(driver dbal.DatabaseDriver) *Service {
 	return &Service{driver: driver}
 }
 
-// EnsureSystemTables creates sys_* catalog if not present with default credentials
+// EnsureSystemTables creates the sys_* catalog if it is not present.
+// It never creates user accounts: a database only gets its first owner through
+// EnsureSystemTablesWithCredentials, with credentials chosen by the caller.
 func (s *Service) EnsureSystemTables(ctx context.Context) error {
 	return s.EnsureSystemTablesWithCredentials(ctx, "", "")
 }
 
-// EnsureSystemTablesWithCredentials provisions the system tables and the initial owner user matching the database name and password
+// EnsureSystemTablesWithCredentials provisions the system tables and, when both
+// a username and a password are supplied, the initial owner account. There are
+// no built-in default credentials.
 func (s *Service) EnsureSystemTablesWithCredentials(ctx context.Context, initialOwnerUser, initialOwnerPassword string) error {
 	queries := []string{
 		`CREATE TABLE IF NOT EXISTS sys_tables (
@@ -202,19 +206,8 @@ func (s *Service) EnsureSystemTablesWithCredentials(ctx context.Context, initial
 		}
 	}
 
-	if strings.TrimSpace(initialOwnerUser) != "" {
-		pass := initialOwnerPassword
-		if pass == "" {
-			pass = "admin"
-		}
-		provisionUser(initialOwnerUser, pass, "owner")
-	} else {
-		// Only provision default dev users if sys_users is completely empty and no owner was requested
-		var totalUsers int
-		_ = db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sys_users`).Scan(&totalUsers)
-		if totalUsers == 0 {
-			provisionUser("admin", "admin", "owner")
-		}
+	if strings.TrimSpace(initialOwnerUser) != "" && initialOwnerPassword != "" {
+		provisionUser(initialOwnerUser, initialOwnerPassword, "owner")
 	}
 
 	return nil

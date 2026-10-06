@@ -61,10 +61,26 @@ class ServerUrlNotifier extends Notifier<String> {
 final serverUrlProvider =
     NotifierProvider<ServerUrlNotifier, String>(ServerUrlNotifier.new);
 
+/// Counts the times the server rejected the current session (HTTP 401 on a
+/// request other than sign-in). The workspace listens to it to lock itself.
+class SessionExpiredNotifier extends Notifier<int> {
+  @override
+  int build() => 0;
+
+  void notify() => state = state + 1;
+}
+
+final sessionExpiredProvider =
+    NotifierProvider<SessionExpiredNotifier, int>(SessionExpiredNotifier.new);
+
 final apiClientProvider = Provider<ApiClient>((ref) {
   final baseUrl = ref.watch(serverUrlProvider);
   final client = ApiClient(baseUrl: baseUrl);
-  ref.onDispose(() => client.close());
+  client.onUnauthorized = () => ref.read(sessionExpiredProvider.notifier).notify();
+  ref.onDispose(() {
+    client.onUnauthorized = null;
+    client.close();
+  });
   return client;
 });
 
@@ -230,7 +246,30 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
     }
   }
 
+  /// Locks the workspace after the server rejected the session (expired,
+  /// revoked, or the server was restarted). Does nothing when already signed out.
+  void _handleSessionExpired() {
+    if (!mounted || _currentUser == null) return;
+    setState(() {
+      _currentUser = null;
+      _tables = [];
+      _selectedTable = null;
+      _activeLayout = null;
+      _serverLayouts = [];
+      _userPermissions = {};
+      _serverStatus = 'Online (Locked)';
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Your session has expired. Please sign in again.'),
+        duration: Duration(seconds: 4),
+      ),
+    );
+  }
+
   void _handleSignOut() {
+    // Close the server session; the token is forgotten immediately
+    ref.read(apiClientProvider).logout();
     setState(() {
       _currentUser = null;
       _tables = [];
@@ -1213,6 +1252,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
   @override
   Widget build(BuildContext context) {
     final mode = ref.watch(operationalModeProvider);
+    ref.listen<int>(sessionExpiredProvider, (previous, next) => _handleSessionExpired());
 
     return CallbackShortcuts(
       bindings: {

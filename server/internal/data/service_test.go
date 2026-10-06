@@ -39,7 +39,16 @@ func TestDataService_CRUDAndFindMode(t *testing.T) {
 	}
 
 	schemaSvc := schema.NewService(driver)
+	require.NoError(t, schemaSvc.EnsureSystemTables(ctx))
 	dataSvc := data.NewService(driver)
+
+	// Tables outside the catalog (including the system tables) are unreachable
+	_, err = dataSvc.ListRows(ctx, "sys_users", data.QueryOptions{})
+	require.ErrorIs(t, err, data.ErrTableNotFound)
+	_, err = dataSvc.InsertRow(ctx, "sys_users", map[string]interface{}{"username": "intruder"})
+	require.ErrorIs(t, err, data.ErrTableNotFound)
+	_, err = dataSvc.ExecuteFind(ctx, "pg_catalog.pg_shadow", []data.FindRequest{{Criteria: []data.FindCriterion{{FieldName: "usename", Value: "x"}}}}, data.QueryOptions{})
+	require.ErrorIs(t, err, data.ErrTableNotFound)
 
 	// Create contacts table
 	tblName := fmt.Sprintf("contacts_test_%d", time.Now().UnixNano()%1000000)

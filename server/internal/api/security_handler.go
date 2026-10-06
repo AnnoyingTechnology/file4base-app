@@ -2,40 +2,50 @@ package api
 
 import (
 	"encoding/json"
-	"fmt"
+	"errors"
 	"net/http"
 	"strings"
+	"time"
 
+	"github.com/file4base/file4base-app/server/internal/auth"
 	"github.com/file4base/file4base-app/server/internal/dbal"
 	"github.com/file4base/file4base-app/server/internal/schema"
 	"github.com/file4base/file4base-app/server/internal/telemetry"
 	"github.com/go-chi/chi/v5"
 )
 
+// SecurityHandler serves authentication (login, logout, session) and the
+// management of user accounts and layout permissions.
 type SecurityHandler struct {
-	dbMgr     *dbal.MultiDatabaseManager
-	schemaSvc *schema.Service
+	dbMgr    *dbal.MultiDatabaseManager
+	sessions *auth.Store
 }
 
-func NewSecurityHandler(dbMgr *dbal.MultiDatabaseManager, schemaSvc *schema.Service) *SecurityHandler {
+func NewSecurityHandler(dbMgr *dbal.MultiDatabaseManager, sessions *auth.Store) *SecurityHandler {
 	return &SecurityHandler{
-		dbMgr:     dbMgr,
-		schemaSvc: schemaSvc,
+		dbMgr:    dbMgr,
+		sessions: sessions,
 	}
 }
 
-func (h *SecurityHandler) RegisterRoutes(r chi.Router) {
-	// Authentication
+// RegisterPublicRoutes registers the endpoints reachable without a session.
+func (h *SecurityHandler) RegisterPublicRoutes(r chi.Router) {
 	r.Post("/api/v1/auth/login", h.Login)
+}
 
-	// User security management
+// RegisterRoutes registers the endpoints that require a session.
+func (h *SecurityHandler) RegisterRoutes(r chi.Router) {
+	r.With(RequireSession).Post("/api/v1/auth/logout", h.Logout)
+	r.With(RequireSession).Get("/api/v1/auth/session", h.CurrentSession)
+
 	r.Route("/api/v1/security", func(r chi.Router) {
-		r.Get("/users", h.ListUsers)
-		r.Post("/users", h.CreateUser)
-		r.Put("/users/{id}", h.UpdateUser)
-		r.Delete("/users/{id}", h.DeleteUser)
-		r.Get("/users/{id}/permissions", h.GetUserPermissions)
-		r.Put("/users/{id}/permissions", h.SetUserPermissions)
+		r.Use(RequireSession)
+		r.With(RequireAdmin).Get("/users", h.ListUsers)
+		r.With(RequireAdmin).Post("/users", h.CreateUser)
+		r.Put("/users/{id}", h.UpdateUser) // admins, or a user changing their own password
+		r.With(RequireAdmin).Delete("/users/{id}", h.DeleteUser)
+		r.Get("/users/{id}/permissions", h.GetUserPermissions) // admins, or the user themselves
+		r.With(RequireAdmin).Put("/users/{id}/permissions", h.SetUserPermissions)
 	})
 }
 
@@ -45,6 +55,8 @@ type LoginRequest struct {
 	Password string `json:"password"`
 }
 
+// Login authenticates a user against one database and opens a session bound
+// to that database. It changes no server-wide state.
 func (h *SecurityHandler) Login(w http.ResponseWriter, r *http.Request) {
 	var req LoginRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -52,64 +64,97 @@ func (h *SecurityHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// If database specified, switch to it and ensure system tables
-	if req.Database != "" && req.Database != h.dbMgr.ActiveDatabase() {
-		if _, err := h.dbMgr.SetActiveDatabase(r.Context(), req.Database); err != nil {
-			telemetry.WriteProblem(w, r, http.StatusBadRequest, "Database Switch Error", fmt.Sprintf("database switch failed: %v", err))
-			return
-		}
-		if err := h.schemaSvc.EnsureSystemTables(r.Context()); err != nil {
-			telemetry.WriteInternalError(w, r, fmt.Errorf("failed ensuring system tables: %w", err))
-			return
-		}
-	} else {
-		_ = h.schemaSvc.EnsureSystemTables(r.Context())
+	dbName := strings.TrimSpace(req.Database)
+	if dbName == "" {
+		telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "Validation Failed", "database is required")
+		return
 	}
 
-	user, err := h.schemaSvc.Authenticate(r.Context(), req.Username, req.Password)
+	canonical, exists, err := h.dbMgr.LookupDatabase(r.Context(), dbName)
+	if err != nil {
+		telemetry.WriteProblem(w, r, http.StatusServiceUnavailable, "Database Unavailable", "the database server is not reachable")
+		return
+	}
+	if !exists {
+		telemetry.WriteProblem(w, r, http.StatusNotFound, "Database Not Found", "database '"+dbName+"' does not exist on this server")
+		return
+	}
+	dbName = canonical
+
+	driver, err := h.dbMgr.DriverFor(r.Context(), dbName)
+	if err != nil {
+		telemetry.WriteProblem(w, r, http.StatusServiceUnavailable, "Database Unavailable", "database '"+dbName+"' is not reachable")
+		return
+	}
+
+	svc := schema.NewService(driver)
+	// Signing in never initializes a database: only databases that already
+	// carry the File4Base catalog accept logins. For those, pending catalog
+	// migrations are applied (idempotent, creates no accounts).
+	if !svc.HasSystemCatalog(r.Context()) {
+		telemetry.WriteProblem(w, r, http.StatusUnauthorized, "Authentication Failed", schema.ErrInvalidCredentials.Error())
+		return
+	}
+	if err := svc.EnsureSystemTables(r.Context()); err != nil {
+		telemetry.WriteInternalError(w, r, errors.New("failed preparing the system catalog"))
+		return
+	}
+
+	user, err := svc.Authenticate(r.Context(), req.Username, req.Password)
 	if err != nil {
 		telemetry.WriteProblem(w, r, http.StatusUnauthorized, "Authentication Failed", err.Error())
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{
-		"status":   "ok",
-		"database": h.dbMgr.ActiveDatabase(),
-		"user":     user,
-	})
-}
-
-func (h *SecurityHandler) getServiceForRequest(r *http.Request, explicitDB ...string) (*schema.Service, error) {
-	dbName := strings.TrimSpace(r.URL.Query().Get("database"))
-	if dbName == "" {
-		dbName = strings.TrimSpace(r.Header.Get("X-Database-Name"))
-	}
-	if dbName == "" && len(explicitDB) > 0 {
-		dbName = strings.TrimSpace(explicitDB[0])
-	}
-	if dbName == "" || dbName == h.dbMgr.ActiveDatabase() {
-		_ = h.schemaSvc.EnsureSystemTables(r.Context())
-		return h.schemaSvc, nil
-	}
-
-	driver, err := h.dbMgr.GetDriver(r.Context(), dbName)
+	token, sess, err := h.sessions.Create(user.ID, user.Username, user.Role, dbName)
 	if err != nil {
-		return nil, fmt.Errorf("database '%s' not accessible: %w", dbName, err)
-	}
-	svc := schema.NewService(driver)
-	_ = svc.EnsureSystemTables(r.Context())
-	return svc, nil
-}
-
-func (h *SecurityHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
-	svc, err := h.getServiceForRequest(r)
-	if err != nil {
-		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Database Error", err.Error())
+		telemetry.WriteInternalError(w, r, errors.New("failed creating session"))
 		return
 	}
 
-	users, err := svc.ListUsers(r.Context())
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"status":     "ok",
+		"database":   dbName,
+		"user":       user,
+		"token":      token,
+		"token_type": "Bearer",
+		"expires_at": sess.ExpiresAt.UTC().Format(time.RFC3339),
+	})
+}
+
+// Logout revokes the caller's session.
+func (h *SecurityHandler) Logout(w http.ResponseWriter, r *http.Request) {
+	h.sessions.Revoke(auth.TokenFromContext(r.Context()))
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// CurrentSession returns the user and database of the caller's session.
+func (h *SecurityHandler) CurrentSession(w http.ResponseWriter, r *http.Request) {
+	sess := currentSession(r)
+	perms, err := schemaService(r).GetUserPermissions(r.Context(), sess.UserID)
+	if err != nil {
+		perms = make([]schema.UserLayoutPermission, 0)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"database": sess.Database,
+		"user": schema.AuthUser{
+			ID:          sess.UserID,
+			Username:    sess.Username,
+			Role:        sess.Role,
+			IsActive:    true,
+			Permissions: perms,
+		},
+		"expires_at": sess.ExpiresAt.UTC().Format(time.RFC3339),
+	})
+}
+
+func (h *SecurityHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
+	users, err := schemaService(r).ListUsers(r.Context())
 	if err != nil {
 		telemetry.WriteInternalError(w, r, err)
 		return
@@ -120,7 +165,6 @@ func (h *SecurityHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
 }
 
 type CreateUserRequest struct {
-	Database string `json:"database,omitempty"`
 	Username string `json:"username"`
 	Password string `json:"password"`
 	Role     string `json:"role"`
@@ -134,13 +178,15 @@ func (h *SecurityHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	svc, err := h.getServiceForRequest(r, req.Database)
-	if err != nil {
-		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Database Error", err.Error())
+	// Only an owner can mint another owner
+	if req.Role == auth.RoleOwner && !currentSession(r).IsOwner() {
+		writeForbidden(w, r, "only an owner can create owner accounts")
 		return
 	}
 
+	svc := schemaService(r)
 	var user *schema.UserMetadata
+	var err error
 	if req.IsActive != nil {
 		user, err = svc.CreateUser(r.Context(), req.Username, req.Password, req.Role, *req.IsActive)
 	} else {
@@ -157,7 +203,6 @@ func (h *SecurityHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 }
 
 type UpdateUserRequest struct {
-	Database string `json:"database,omitempty"`
 	Password string `json:"password,omitempty"`
 	Role     string `json:"role"`
 	IsActive *bool  `json:"is_active,omitempty"`
@@ -171,15 +216,54 @@ func (h *SecurityHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	svc, err := h.getServiceForRequest(r, req.Database)
+	sess := currentSession(r)
+	svc := schemaService(r)
+
+	target, err := svc.GetUser(r.Context(), id)
 	if err != nil {
-		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Database Error", err.Error())
+		telemetry.WriteProblem(w, r, http.StatusNotFound, "User Not Found", err.Error())
+		return
+	}
+	if req.Role == "" {
+		req.Role = target.Role
+	}
+	isSelf := sess.UserID == target.ID
+
+	switch {
+	case sess.IsOwner():
+		// Owners manage every account.
+	case sess.IsAdmin():
+		// Admins manage admins and users, but can neither touch owner
+		// accounts nor promote anyone to owner.
+		if target.Role == auth.RoleOwner || req.Role == auth.RoleOwner {
+			writeForbidden(w, r, "only an owner can manage owner accounts")
+			return
+		}
+	case isSelf:
+		// Regular users may only change their own password.
+		if req.Role != target.Role || req.IsActive != nil {
+			writeForbidden(w, r, "you can only change your own password")
+			return
+		}
+	default:
+		writeForbidden(w, r, "your role does not allow this operation")
 		return
 	}
 
 	if err := svc.UpdateUser(r.Context(), id, req.Password, req.Role, req.IsActive); err != nil {
 		telemetry.WriteProblem(w, r, http.StatusBadRequest, "User Update Error", err.Error())
 		return
+	}
+
+	// Credentials, role or status changed: the user's other sessions must not
+	// outlive the change. The caller keeps their own session when editing themselves.
+	deactivated := req.IsActive != nil && !*req.IsActive
+	if req.Password != "" || req.Role != target.Role || deactivated {
+		keep := ""
+		if isSelf && !deactivated && req.Role == target.Role {
+			keep = auth.TokenFromContext(r.Context())
+		}
+		h.sessions.RevokeUser(sess.Database, id, keep)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -191,9 +275,20 @@ func (h *SecurityHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 
 func (h *SecurityHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	svc, err := h.getServiceForRequest(r)
+	sess := currentSession(r)
+	svc := schemaService(r)
+
+	target, err := svc.GetUser(r.Context(), id)
 	if err != nil {
-		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Database Error", err.Error())
+		telemetry.WriteProblem(w, r, http.StatusNotFound, "User Not Found", err.Error())
+		return
+	}
+	if target.ID == sess.UserID {
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "User Deletion Error", "you cannot delete your own account")
+		return
+	}
+	if target.Role == auth.RoleOwner && !sess.IsOwner() {
+		writeForbidden(w, r, "only an owner can manage owner accounts")
 		return
 	}
 
@@ -201,19 +296,20 @@ func (h *SecurityHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 		telemetry.WriteProblem(w, r, http.StatusBadRequest, "User Deletion Error", err.Error())
 		return
 	}
+	h.sessions.RevokeUser(sess.Database, id, "")
 
 	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *SecurityHandler) GetUserPermissions(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	svc, err := h.getServiceForRequest(r)
-	if err != nil {
-		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Database Error", err.Error())
+	sess := currentSession(r)
+	if !sess.IsAdmin() && sess.UserID != id {
+		writeForbidden(w, r, "you can only read your own permissions")
 		return
 	}
 
-	perms, err := svc.GetUserPermissions(r.Context(), id)
+	perms, err := schemaService(r).GetUserPermissions(r.Context(), id)
 	if err != nil {
 		telemetry.WriteProblem(w, r, http.StatusNotFound, "User Permissions Not Found", err.Error())
 		return
@@ -224,7 +320,6 @@ func (h *SecurityHandler) GetUserPermissions(w http.ResponseWriter, r *http.Requ
 }
 
 type SetPermissionsRequest struct {
-	Database    string                       `json:"database,omitempty"`
 	Permissions []schema.UserLayoutPermission `json:"permissions"`
 }
 
@@ -236,9 +331,9 @@ func (h *SecurityHandler) SetUserPermissions(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	svc, err := h.getServiceForRequest(r, req.Database)
-	if err != nil {
-		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Database Error", err.Error())
+	svc := schemaService(r)
+	if _, err := svc.GetUser(r.Context(), id); err != nil {
+		telemetry.WriteProblem(w, r, http.StatusNotFound, "User Not Found", err.Error())
 		return
 	}
 

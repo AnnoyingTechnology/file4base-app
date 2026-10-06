@@ -9,6 +9,42 @@ on:
   workflow_dispatch:
 
 jobs:
+  test-server:
+    name: Test Go Server (vet + unit/integration tests)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: file4base
+          POSTGRES_PASSWORD: dev_password
+          POSTGRES_DB: file4base_dev
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U file4base -d file4base_dev"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+
+      - name: Vet
+        working-directory: server
+        run: go vet ./...
+
+      - name: Run Go tests
+        working-directory: server
+        # Packages share one PostgreSQL instance, so they run one at a time
+        run: go test -p 1 -count=1 ./...
+
   build-macos:
     name: Build macOS Desktop (Universal / Apple Silicon & Intel)
     runs-on: macos-latest
@@ -124,7 +160,7 @@ jobs:
 
   publish-release:
     name: Publish GitHub Release
-    needs: [build-macos, build-linux, build-windows]
+    needs: [test-server, build-macos, build-linux, build-windows]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:

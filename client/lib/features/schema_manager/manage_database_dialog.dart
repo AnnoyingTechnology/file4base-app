@@ -73,23 +73,21 @@ class _ManageDatabaseDialogState extends ConsumerState<ManageDatabaseDialog>
   }
 
   Future<void> _handleSwitchDatabase(String dbName) async {
-    final client = ref.read(apiClientProvider);
-    try {
-      await client.switchDatabase(dbName);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Switched to database "$dbName"')),
-        );
-      }
-      await _loadDatabases();
-      await _loadTables();
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to switch database: $e'), backgroundColor: Colors.red),
-        );
-      }
+    // A session is bound to the database it signed in to, so another database
+    // can only be opened by signing in to it with its own credentials.
+    if (!mounted) return;
+    if (dbName == _activeDatabase) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('"$dbName" is already the open database.')),
+      );
+      return;
     }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('To work on "$dbName", use File > Open and sign in with that database\'s credentials.'),
+        duration: const Duration(seconds: 5),
+      ),
+    );
   }
 
   Future<void> _handleDeleteDatabases(List<String> targets) async {
@@ -107,6 +105,11 @@ class _ManageDatabaseDialogState extends ConsumerState<ManageDatabaseDialog>
       return;
     }
 
+    // Dropping a database other than the one of the current session requires
+    // proving ownership of it: the server checks these credentials per database.
+    final ownerUserController = TextEditingController();
+    final ownerPasswordController = TextEditingController();
+
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -117,10 +120,39 @@ class _ManageDatabaseDialogState extends ConsumerState<ManageDatabaseDialog>
             Text('Drop ${toDelete.length} Database${toDelete.length > 1 ? "s" : ""}'),
           ],
         ),
-        content: Text(
-          'DANGER: This will permanently DROP ${toDelete.length} database(s) and ALL tables, records, schemas, and users within them:\n\n'
-          '${toDelete.map((d) => '• $d').join('\n')}\n\n'
-          'This action CANNOT be undone. Are you sure you want to proceed?',
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'DANGER: This will permanently DROP ${toDelete.length} database(s) and ALL tables, records, schemas, and users within them:\n\n'
+                '${toDelete.map((d) => '• $d').join('\n')}\n\n'
+                'This action CANNOT be undone. Are you sure you want to proceed?',
+              ),
+              const SizedBox(height: 16),
+              const Text('Enter the credentials of an owner of the database(s) being dropped:'),
+              const SizedBox(height: 8),
+              TextField(
+                controller: ownerUserController,
+                decoration: const InputDecoration(
+                  labelText: 'Owner User',
+                  border: OutlineInputBorder(),
+                  isDense: true,
+                ),
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: ownerPasswordController,
+                obscureText: true,
+                decoration: const InputDecoration(
+                  labelText: 'Owner Password',
+                  border: OutlineInputBorder(),
+                  isDense: true,
+                ),
+              ),
+            ],
+          ),
         ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
@@ -135,13 +167,16 @@ class _ManageDatabaseDialogState extends ConsumerState<ManageDatabaseDialog>
 
     if (confirmed != true) return;
 
+    final ownerUser = ownerUserController.text.trim();
+    final ownerPassword = ownerPasswordController.text;
+
     final client = ref.read(apiClientProvider);
     int successCount = 0;
     final List<String> errors = [];
 
     for (final dbName in toDelete) {
       try {
-        await client.deleteDatabase(dbName);
+        await client.deleteDatabase(dbName, ownerUsername: ownerUser, ownerPassword: ownerPassword);
         _selectedDatabaseNames.remove(dbName);
         successCount++;
       } catch (e) {
@@ -170,7 +205,7 @@ class _ManageDatabaseDialogState extends ConsumerState<ManageDatabaseDialog>
     final client = ref.read(apiClientProvider);
     final dbNameController = TextEditingController();
     final userController = TextEditingController(text: 'admin');
-    final passwordController = TextEditingController(text: 'admin');
+    final passwordController = TextEditingController();
 
     bool obscurePassword = true;
 
@@ -230,10 +265,18 @@ class _ManageDatabaseDialogState extends ConsumerState<ManageDatabaseDialog>
               final name = dbNameController.text.trim().toLowerCase();
               final user = userController.text.trim();
               final pass = passwordController.text.trim();
-              if (name.isEmpty) return;
+              if (name.isEmpty || user.isEmpty || pass.isEmpty) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Database name, owner user and owner password are required.'),
+                    backgroundColor: Colors.orange,
+                  ),
+                );
+                return;
+              }
               Navigator.pop(ctx);
               try {
-                await client.createDatabase(name, user: user.isNotEmpty ? user : 'admin', password: pass.isNotEmpty ? pass : 'admin');
+                await client.createDatabase(name, user: user, password: pass);
                 if (mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(content: Text('Database "$name" created successfully.')),

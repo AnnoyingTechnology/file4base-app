@@ -22,7 +22,7 @@
   - [x] `GET /api/v1/schemas/tables`
   - [x] `POST /api/v1/schemas/tables`
   - [x] `POST /api/v1/schemas/tables/{id}/columns`
-  - [ ] `GET /api/v1/schemas/relationships`
+  - [x] `GET /api/v1/schemas/relationships`
 
 ## Phase 3: Visual Schema Designer (Flutter Client)
 - [x] Build **Manage Database** Dialog in Flutter:
@@ -57,18 +57,30 @@
   - [x] Layout backend REST persistence (`/api/v1/schemas/layouts`).
   - [x] Official branding integration across macOS, Windows, Linux, and WebDirect.
 
+## Security & Multi-User Foundations (prerequisite for Phase 6)
+- [x] Session-based API authentication (`POST /api/v1/auth/login` bearer tokens, logout, session introspection).
+- [x] Per-session database binding (no server-wide active database).
+- [x] Server-side enforcement of roles (`owner`, `admin`, `user`) and per-layout permissions.
+- [x] Data API restricted to catalog tables and fields; system tables unreachable.
+- [x] No default accounts; database creation provisions the first owner explicitly.
+- [x] Go test suite and `go vet` in CI.
+- [ ] Sign-in rate limiting and account lockout.
+- [ ] Sessions shared across server replicas (required for horizontal scaling).
+
 ## Phase 6: Real-Time Sync & Multi-User Collaboration
 - [ ] Set up WebSocket hub in Go server.
 - [ ] Implement DB event notifications (PostgreSQL `LISTEN/NOTIFY` with fallback to Go pub/sub for MariaDB).
 - [ ] Connect Flutter client to WebSockets to refresh layouts and records in real-time.
 
 ## Phase 7: Calculation Engine & Script Workspace
-- [ ] Implement data model in Go and PostgreSQL for scripts (`sys_scripts`, `sys_script_steps`).
-- [ ] Build 3-panel layout in Flutter desktop according to `docs/specs/script_workspace_spec.md`:
-  - [ ] Left Panel: Scripts Explorer tree view with search and context menu (New, Duplicate, Delete).
-  - [ ] Center Panel: Sequential step editor with two-digit line numbers, category colors, and active toggle.
-  - [ ] Bottom Panel: Contextual parameter inspector with `[ fx Specify... ]` formula constructor.
-  - [ ] Right Panel: Categorized step catalog (Navigation, Records, Control & Logic, Integration & Data).
-- [ ] Implement drag-and-drop step reordering (`ReorderableListView`) and visual conditional indentation (`If/Else/End If`, `Loop/End Loop`).
+- [x] Implement script metadata and ordered step persistence in the system catalog (`sys_scripts`, `sys_script_steps`).
+- [x] Build the Script Workspace UI with script listing, create, duplicate, delete, and step editing.
+- [x] Add a calculation formula builder to the client for calculation fields.
+- [ ] Complete the three-panel Script Workspace described in `docs/specs/script_workspace_spec.md`:
+  - [x] Scripts Explorer with create, duplicate, and delete actions.
+  - [x] Sequential step editor with enabled/disabled steps.
+  - [ ] Contextual parameter inspector with formula constructor.
+  - [ ] Categorized step catalog for Navigation, Records, Control & Logic, and Integration & Data.
+- [ ] Implement drag-and-drop step reordering and visual conditional indentation (`If/Else/End If`, `Loop/End Loop`).
 - [ ] Embed formula calculation engine in Go (arithmetic, string concatenation, logical tests, date math via Google CEL).
 - [ ] Script step runner executing actions deterministically with step-by-step debugging.

@@ -137,4 +137,120 @@ void main() {
       );
     });
   });
+
+  group('ApiClient Session Handling', () {
+    const userJson = {'id': 'u1', 'username': 'alice', 'role': 'owner', 'is_active': true};
+
+    test('sends the session token returned by login on later requests', () async {
+      final authHeaders = <String, String?>{};
+
+      final mockClient = MockClient((request) async {
+        authHeaders[request.url.path] = request.headers['authorization'];
+        if (request.url.path == '/api/v1/auth/login') {
+          return http.Response(
+            jsonEncode({'status': 'ok', 'database': 'sales', 'user': userJson, 'token': 'tok-123'}),
+            200,
+          );
+        }
+        if (request.url.path == '/api/v1/schemas/tables') {
+          return http.Response('[]', 200);
+        }
+        return http.Response('', 204);
+      });
+
+      final client = ApiClient(baseUrl: 'http://test-server:8080', httpClient: mockClient);
+      expect(client.isAuthenticated, isFalse);
+
+      final auth = await client.login(username: 'alice', password: 'secret', database: 'sales');
+      expect(auth.token, 'tok-123');
+      expect(client.isAuthenticated, isTrue);
+      expect(authHeaders['/api/v1/auth/login'], isNull);
+
+      await client.listTables();
+      expect(authHeaders['/api/v1/schemas/tables'], 'Bearer tok-123');
+
+      await client.logout();
+      expect(client.isAuthenticated, isFalse);
+      expect(authHeaders['/api/v1/auth/logout'], 'Bearer tok-123');
+
+      await client.listTables();
+      expect(authHeaders['/api/v1/schemas/tables'], isNull);
+    });
+
+    test('a 401 on a protected request drops the session and notifies', () async {
+      var loggedIn = false;
+      final mockClient = MockClient((request) async {
+        if (request.url.path == '/api/v1/auth/login') {
+          loggedIn = true;
+          return http.Response(
+            jsonEncode({'status': 'ok', 'database': 'sales', 'user': userJson, 'token': 'tok-123'}),
+            200,
+          );
+        }
+        return http.Response(
+          jsonEncode({'title': 'Authentication Required', 'status': 401, 'detail': 'session expired'}),
+          401,
+        );
+      });
+
+      final client = ApiClient(baseUrl: 'http://test-server:8080', httpClient: mockClient);
+      var notified = 0;
+      client.onUnauthorized = () => notified++;
+
+      await client.login(username: 'alice', password: 'secret', database: 'sales');
+      expect(loggedIn, isTrue);
+      expect(notified, 0);
+
+      await expectLater(client.listTables(), throwsA(isA<ApiException>().having((e) => e.statusCode, 'statusCode', 401)));
+      expect(notified, 1);
+      expect(client.isAuthenticated, isFalse);
+    });
+
+    test('a failed login does not end the current session', () async {
+      var attempts = 0;
+      final mockClient = MockClient((request) async {
+        if (request.url.path == '/api/v1/auth/login') {
+          attempts++;
+          if (attempts == 1) {
+            return http.Response(
+              jsonEncode({'status': 'ok', 'database': 'sales', 'user': userJson, 'token': 'tok-123'}),
+              200,
+            );
+          }
+          return http.Response(
+            jsonEncode({'title': 'Authentication Failed', 'status': 401, 'detail': 'invalid username or password'}),
+            401,
+          );
+        }
+        return http.Response('[]', 200);
+      });
+
+      final client = ApiClient(baseUrl: 'http://test-server:8080', httpClient: mockClient);
+      var notified = 0;
+      client.onUnauthorized = () => notified++;
+
+      await client.login(username: 'alice', password: 'secret', database: 'sales');
+      await expectLater(
+        client.login(username: 'alice', password: 'wrong', database: 'other'),
+        throwsA(isA<ApiException>()),
+      );
+      expect(notified, 0);
+      expect(client.authToken, 'tok-123');
+    });
+
+    test('deleteDatabase forwards the owner credentials of the target database', () async {
+      String? body;
+      final mockClient = MockClient((request) async {
+        body = request.body;
+        return http.Response(jsonEncode({'database': 'old_db', 'status': 'deleted'}), 200);
+      });
+
+      final client = ApiClient(baseUrl: 'http://test-server:8080', httpClient: mockClient);
+      await client.deleteDatabase('old_db', ownerUsername: 'bob', ownerPassword: 'secret-b');
+
+      final decoded = jsonDecode(body!) as Map<String, dynamic>;
+      expect(decoded['username'], 'bob');
+      expect(decoded['password'], 'secret-b');
+    });
+  });
 }

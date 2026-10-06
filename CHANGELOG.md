@@ -9,6 +9,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-06
+
+### Security
+- **API authentication (breaking)**: every schema, data, security and solution endpoint now requires a session. `POST /api/v1/auth/login` returns a bearer token (`Authorization: Bearer <token>`); added `POST /api/v1/auth/logout` and `GET /api/v1/auth/session`. Only the health probes, Swagger UI, sign-in and the database selector remain public.
+- **Server-side authorization**: `owner` / `admin` / `user` roles are enforced on every route. Per-layout permissions are enforced by the server too (hidden layouts, layout saving, and record access through the data API), instead of only in the client.
+- **Per-session database (breaking)**: removed the server-wide "active database". A session is bound to the database it signed in to, so one client can no longer redirect the requests of another. `POST /api/v1/databases/switch` is deprecated and only reports whether a database exists.
+- **Data API restricted to user tables**: `/api/v1/data/{table}` only serves tables registered in `sys_tables` and fields registered in `sys_columns`. System tables such as `sys_users` (password hashes) are no longer reachable. Data imports (`.f4data`) are restricted to catalog tables as well.
+- **Login requires a matching username and password**: removed the fallback that accepted any owner's password regardless of the username. Response timing no longer reveals whether a username exists.
+- **No default accounts**: removed the automatic `admin` / `admin` owner. `POST /api/v1/databases` requires the credentials of the first owner, returns `409` for an existing database instead of adding an owner to it, and can be limited to signed-in owners with `ALLOW_PUBLIC_DATABASE_CREATION=false`.
+- **Dropping a database requires proof of ownership**: an owner session on that database, or the credentials of one of its owners.
+- Sessions are revoked when a user's password, role or status changes, when the user is deleted, and when the database is dropped. The last active owner can no longer be demoted or deactivated.
+- Explicit `none` layout permissions are now stored (previously they were dropped and silently became `read_write`).
+- CORS origins are configurable through `CORS_ALLOWED_ORIGINS`; solution and data imports are size-limited; engine-internal databases (`postgres`, `mysql`, ...) cannot be signed in to, created or dropped through the API.
+
+### Added
+- `internal/auth` session store and `api.Mount` route assembly with public and protected groups.
+- Client: the API client keeps the session token, sends it on every request, signs out on the server, and locks the workspace when the session expires.
+- Client: the "Drop Database" confirmation asks for the owner credentials of the databases being dropped.
+- CI: new `test-server` job running `go vet` and the Go test suite against a PostgreSQL service; releases depend on it.
+- `.env.example` and environment-driven credentials, bind address and server options in `docker-compose.yml`.
+- End-to-end API tests covering authentication, database isolation, roles, layout permissions and the data API restrictions.
+
+### Changed
+- `client/Dockerfile` is now multi-stage and builds the Flutter web bundle itself, so `docker compose up` works on a clean clone.
+- Database ports in `docker-compose.yml` are published on `127.0.0.1` by default.
+- Health responses no longer expose `active_database` and report the configured engine.
+- Removed the hard-coded `dev_password` defaults from the solution export endpoint and the client's connection model; the server warns when it falls back to the development DSN.
+- Manage Database: the "switch" action explains that another database is opened by signing in to it; creating a database requires an owner user and password (no `admin` / `admin` prefill).
+- Opening a solution file signs in first and imports afterwards; packaged users are synchronized after sign-in.
+- Updated client and roadmap documentation to match the implemented application and current feature status.
+- Clarified empty-database startup behavior and existing Docker volume persistence in the deployment guide.
+- Aligned database login empty-state messages with the repository's English language policy.
+- Clarified that `AGENTS.md` and its referenced rules are authoritative over overlapping Antigravity guidance.
+- Documentation aligned with the code: Go 1.26, repository structure, WebSockets and the calculation engine marked as planned, OpenAPI spec updated with the bearer scheme and the auth and database endpoints.
+
+### Removed
+- Unused duplicate `messagepack` Dart dependency (`msgpack_dart` is the one in use).
+
+### Fixed
+- `DROP DATABASE` used a hard-coded `postgres` administrative connection; it now uses the configured administrative database.
+- The Go test suite no longer depends on pre-existing accounts or on the order in which packages run.
+
 ## [0.4.26] - 2026-10-01
 
 ### Changed

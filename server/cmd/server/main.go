@@ -6,43 +6,103 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
+	"strings"
 	"sync/atomic"
 	"syscall"
 	"time"
 
 	"github.com/file4base/file4base-app/server/internal/api"
-	"github.com/file4base/file4base-app/server/internal/data"
+	"github.com/file4base/file4base-app/server/internal/auth"
 	"github.com/file4base/file4base-app/server/internal/dbal"
 	"github.com/file4base/file4base-app/server/internal/dbal/mariadb"
 	"github.com/file4base/file4base-app/server/internal/dbal/postgres"
-	"github.com/file4base/file4base-app/server/internal/schema"
 	"github.com/file4base/file4base-app/server/internal/telemetry"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 )
 
-const AppVersion = "0.4.26"
+const AppVersion = "0.5.0"
 
 func init() {
 	dbal.RegisterDialect(dbal.EnginePostgres, func() dbal.Dialect { return postgres.New() })
 	dbal.RegisterDialect(dbal.EngineMariaDB, func() dbal.Dialect { return mariadb.New() })
 }
 
-func corsMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, HEAD, PATCH")
-		w.Header().Set("Access-Control-Allow-Headers", "Accept, Authorization, Content-Type, X-CSRF-Token, X-Requested-With, traceparent, tracestate, X-Trace-ID")
-		w.Header().Set("Access-Control-Expose-Headers", "Link, Content-Length, traceparent, X-Trace-ID, Deprecation, Sunset")
-		w.Header().Set("Access-Control-Max-Age", "300")
-
-		if r.Method == http.MethodOptions {
-			w.WriteHeader(http.StatusNoContent)
-			return
+// corsMiddleware answers CORS preflights and tags responses for the allowed
+// origins. Sessions travel in the Authorization header (never in cookies), so
+// a browser cannot attach a user's credentials to a cross-site request on its
+// own; the allow-list still limits which web origins may call the API at all.
+// allowed == ["*"] accepts any origin.
+func corsMiddleware(allowed []string) func(http.Handler) http.Handler {
+	allowAny := false
+	origins := make(map[string]struct{}, len(allowed))
+	for _, o := range allowed {
+		o = strings.TrimRight(strings.TrimSpace(o), "/")
+		if o == "*" {
+			allowAny = true
 		}
+		if o != "" {
+			origins[strings.ToLower(o)] = struct{}{}
+		}
+	}
 
-		next.ServeHTTP(w, r)
-	})
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			origin := r.Header.Get("Origin")
+			_, listed := origins[strings.ToLower(strings.TrimRight(origin, "/"))]
+
+			switch {
+			case allowAny:
+				w.Header().Set("Access-Control-Allow-Origin", "*")
+			case origin != "" && listed:
+				w.Header().Set("Access-Control-Allow-Origin", origin)
+				w.Header().Add("Vary", "Origin")
+			}
+
+			if allowAny || listed {
+				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, HEAD, PATCH")
+				w.Header().Set("Access-Control-Allow-Headers", "Accept, Authorization, Content-Type, X-CSRF-Token, X-Requested-With, X-Database-Name, traceparent, tracestate, X-Trace-ID")
+				w.Header().Set("Access-Control-Expose-Headers", "Link, Content-Length, Content-Disposition, traceparent, X-Trace-ID, Deprecation, Sunset")
+				w.Header().Set("Access-Control-Max-Age", "300")
+			}
+
+			if r.Method == http.MethodOptions {
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// envBool reads a boolean environment variable, falling back to def when unset or invalid.
+func envBool(name string, def bool) bool {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return def
+	}
+	val, err := strconv.ParseBool(raw)
+	if err != nil {
+		log.Printf("Warning: ignoring invalid boolean %s=%q", name, raw)
+		return def
+	}
+	return val
+}
+
+// envDuration reads a duration environment variable (e.g. "12h", "30m").
+func envDuration(name string, def time.Duration) time.Duration {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return def
+	}
+	val, err := time.ParseDuration(raw)
+	if err != nil || val <= 0 {
+		log.Printf("Warning: ignoring invalid duration %s=%q", name, raw)
+		return def
+	}
+	return val
 }
 
 func main() {
@@ -58,6 +118,7 @@ func main() {
 
 	dsn := os.Getenv("DATABASE_URL")
 	if dsn == "" {
+		log.Println("Warning: DATABASE_URL is not set; falling back to the local development DSN with the default password. Set DATABASE_URL for any non-development deployment.")
 		if engineType == dbal.EnginePostgres {
 			dsn = "postgres://file4base:dev_password@localhost:5432/postgres?sslmode=disable"
 		} else {
@@ -79,33 +140,44 @@ func main() {
 	}
 	defer dbMgr.Close()
 
-	schemaSvc := schema.NewService(dbMgr)
-	dataSvc := data.NewService(dbMgr)
+	// Session store: every signed-in client holds a bearer token bound to
+	// exactly one database. There is no server-wide "active database".
+	sessions := auth.NewStore(envDuration("SESSION_TTL", auth.DefaultSessionTTL))
+
+	corsOrigins := []string{"*"}
+	if raw := strings.TrimSpace(os.Getenv("CORS_ALLOWED_ORIGINS")); raw != "" {
+		corsOrigins = strings.Split(raw, ",")
+	}
+	allowPublicCreate := envBool("ALLOW_PUBLIC_DATABASE_CREATION", true)
+	if allowPublicCreate {
+		log.Println("Notice: anyone who can reach this server may create new databases (ALLOW_PUBLIC_DATABASE_CREATION=true). Set it to false on shared or internet-facing servers.")
+	}
 
 	// Cloud-Native Lifecycle State Flags
 	var isReady atomic.Bool
 	var isStarted atomic.Bool
 	isReady.Store(true)
 
-	// Connect and ensure system tables with retry loop for clean container startup
+	// Wait for the database engine to accept connections. The administrative
+	// database is only used for server-level operations (listing, creating and
+	// dropping databases); the sys_* catalog lives in each solution database.
 	go func() {
-		for i := 0; i < 20; i++ {
+		for i := 0; i < 60; i++ {
 			ctxInit, cancelInit := context.WithTimeout(context.Background(), 2*time.Second)
-			if err := dbMgr.Ping(ctxInit); err == nil {
-				if err := schemaSvc.EnsureSystemTables(ctxInit); err == nil {
-					log.Printf("System catalog (sys_*) tables initialized on active database: %s", dbMgr.ActiveDatabase())
-					isStarted.Store(true)
-					cancelInit()
-					return
-				}
-			}
+			err := dbMgr.Ping(ctxInit)
 			cancelInit()
+			if err == nil {
+				log.Printf("Database engine reachable through administrative database: %s", dbMgr.DefaultDatabase())
+				isStarted.Store(true)
+				return
+			}
 			time.Sleep(1 * time.Second)
 		}
+		log.Println("Warning: database engine did not become reachable during startup")
 	}()
 
 	r := chi.NewRouter()
-	r.Use(corsMiddleware)
+	r.Use(corsMiddleware(corsOrigins))
 	r.Use(telemetry.Middleware("file4base-api", AppVersion))
 	r.Use(middleware.RealIP)
 	r.Use(middleware.Recoverer)
@@ -123,22 +195,16 @@ func main() {
 		log.Printf("Warning: failed to initialize SwaggerHandler: %v", err)
 	}
 
-	// API Domain Handlers
-	schemaHandler := api.NewSchemaHandler(schemaSvc)
-	schemaHandler.RegisterRoutes(r)
-
-	dataHandler := api.NewDataHandler(dataSvc)
-	dataHandler.RegisterRoutes(r)
-
-	solutionHandler := api.NewSolutionHandler(dbMgr, schemaSvc)
-	solutionHandler.RegisterRoutes(r)
-
-	securityHandler := api.NewSecurityHandler(dbMgr, schemaSvc)
-	securityHandler.RegisterRoutes(r)
+	// API domain routes: public sign-in/database selector, and the protected
+	// routes that run against the database of the caller's session.
+	api.Mount(r, dbMgr, sessions, api.Options{
+		AllowPublicDatabaseCreation: allowPublicCreate,
+	})
 
 	srv := &http.Server{
-		Addr:    port,
-		Handler: r,
+		Addr:              port,
+		Handler:           r,
+		ReadHeaderTimeout: 10 * time.Second,
 	}
 
 	go func() {

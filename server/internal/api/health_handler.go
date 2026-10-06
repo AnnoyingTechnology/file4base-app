@@ -104,11 +104,10 @@ func (h *HealthHandler) Readiness(w http.ResponseWriter, r *http.Request) {
 
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
-		"status":          "ready",
-		"database":        "connected",
-		"active_database": h.dbMgr.ActiveDatabase(),
-		"latency_ms":      latencyMs,
-		"timestamp":       time.Now().UTC().Format(time.RFC3339),
+		"status":     "ready",
+		"database":   "connected",
+		"latency_ms": latencyMs,
+		"timestamp":  time.Now().UTC().Format(time.RFC3339),
 	})
 }
 
@@ -162,19 +161,17 @@ func (h *HealthHandler) Diagnostic(w http.ResponseWriter, r *http.Request) {
 		"status":          overallStatus,
 		"app":             "File4Base API",
 		"version":         h.version,
-		"engine":          "postgres",
+		"engine":          string(h.dbMgr.Engine()),
 		"database":        dbStatus,
-		"active_database": h.dbMgr.ActiveDatabase(),
 		"release_id":      fmt.Sprintf("file4base-api-v%s", h.version),
 		"service_id":      "file4base-api",
 		"description":     "File4Base API Engine Health",
 		"uptime_seconds":  uptimeSec,
 		"checks": map[string]interface{}{
 			"database": map[string]interface{}{
-				"status":          dbStatus,
-				"active_database": h.dbMgr.ActiveDatabase(),
-				"latency_ms":      latencyMs,
-				"error":           dbErr,
+				"status":     dbStatus,
+				"latency_ms": latencyMs,
+				"error":      dbErr,
 			},
 			"memory": map[string]interface{}{
 				"alloc_mb":       fmt.Sprintf("%.1f MB", float64(m.Alloc)/(1024*1024)),

@@ -231,15 +231,20 @@ class _OpenSolutionDialogState extends State<OpenSolutionDialog> with SingleTick
         await widget.apiClient.createDatabase(targetDb, user: user, password: pass);
       }
 
-      // 2. Import solution schemas, tables, and layouts into active server database
-      await widget.apiClient.importSolution(_pickedFile!.bytes);
-
-      // 3. Authenticate user into this database
+      // 2. Authenticate user into this database (every later request needs the session)
       final auth = await widget.apiClient.login(
         username: user,
         password: pass,
         database: targetDb,
       );
+
+      // 3. Import solution schemas, tables, and layouts into the signed-in database.
+      // Only owners may import; other users simply open the database as it is.
+      try {
+        await widget.apiClient.importSolution(_pickedFile!.bytes);
+      } on ApiException catch (e) {
+        if (e.statusCode != 403) rethrow;
+      }
 
       if (mounted) {
         Navigator.of(context).pop(OpenSolutionResult(

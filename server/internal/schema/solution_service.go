@@ -274,9 +274,11 @@ func (s *Service) ImportSolution(ctx context.Context, data []byte) (*SolutionBun
 				} else {
 					role = "user"
 				}
+				// Accounts are only restored when the bundle carries a password for
+				// them; there is no built-in default password.
 				pass := bundle.DatabaseConnection.Password
 				if pass == "" {
-					pass = "admin"
+					continue
 				}
 				_, _ = s.CreateUser(ctx, uname, pass, role)
 			}
@@ -358,7 +360,22 @@ func (s *Service) ImportDatabaseData(ctx context.Context, data []byte) (*Databas
 	db := s.driver.DB()
 	dialect := s.driver.Dialect()
 
+	// Only tables registered in the catalog may receive rows. This keeps a data
+	// file from writing into sys_* tables (for example forging sys_users rows).
+	registered, err := s.ListTables(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed listing tables: %w", err)
+	}
+	userTables := make(map[string]struct{}, len(registered))
+	for _, t := range registered {
+		userTables[t.Name] = struct{}{}
+	}
+
 	for tableName, rows := range bundle.TablesData {
+		if _, ok := userTables[tableName]; !ok {
+			delete(bundle.TablesData, tableName)
+			continue
+		}
 		for _, row := range rows {
 			if len(row) == 0 {
 				continue

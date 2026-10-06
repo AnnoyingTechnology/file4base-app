@@ -11,84 +11,109 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-type SchemaHandler struct {
-	svc *schema.Service
+// SchemaHandler serves the schema catalog (tables, occurrences, relationships,
+// layouts and scripts) of the database the caller is signed in to.
+//
+// Reading the catalog is open to every signed-in user. Changing it requires
+// the owner or admin role, with one exception: a regular user may save a
+// layout on which they hold read_write access.
+type SchemaHandler struct{}
+
+func NewSchemaHandler() *SchemaHandler {
+	return &SchemaHandler{}
 }
 
-func NewSchemaHandler(svc *schema.Service) *SchemaHandler {
-	return &SchemaHandler{svc: svc}
+// rootPath returns the collection path of a route group: the prefix itself
+// inside /api/v1/schemas ("/layouts"), or "/" for a top-level alias.
+func rootPath(prefix string) string {
+	if prefix == "" {
+		return "/"
+	}
+	return prefix
 }
 
 func (h *SchemaHandler) RegisterRoutes(r chi.Router) {
-	r.Route("/api/v1/schemas", func(r chi.Router) {
+	tables := func(r chi.Router) {
 		r.Get("/tables", h.ListTables)
-		r.Post("/tables", h.CreateTable)
-		r.Delete("/tables/{id}", h.DeleteTable)
-		r.Put("/tables/{id}/rename", h.RenameTable)
-		r.Post("/tables/{id}/duplicate", h.DuplicateTable)
-		r.Post("/tables/{id}/truncate", h.TruncateTable)
-		r.Post("/tables/{id}/columns", h.AddColumn)
-		r.Put("/tables/{id}/columns/{columnId}", h.UpdateColumn)
-		r.Delete("/tables/{id}/columns/{columnId}", h.DeleteColumn)
-		r.Get("/occurrences", h.ListOccurrences)
-		r.Post("/occurrences", h.CreateOccurrence)
-		r.Put("/occurrences/{id}", h.UpdateOccurrence)
-		r.Delete("/occurrences/{id}", h.DeleteOccurrence)
-		r.Get("/relationships", h.ListRelationships)
-		r.Post("/relationships", h.CreateRelationship)
-		r.Put("/relationships/{id}", h.UpdateRelationship)
-		r.Delete("/relationships/{id}", h.DeleteRelationship)
-		r.Get("/layouts", h.ListLayouts)
-		r.Post("/layouts", h.CreateLayout)
-		r.Get("/layouts/{id}", h.GetLayout)
-		r.Put("/layouts/{id}", h.UpdateLayout)
-		r.Delete("/layouts/{id}", h.DeleteLayout)
-		r.Get("/scripts", h.ListScripts)
-		r.Post("/scripts", h.CreateScript)
-		r.Get("/scripts/{id}", h.GetScript)
-		r.Put("/scripts/{id}", h.UpdateScript)
-		r.Delete("/scripts/{id}", h.DeleteScript)
-		r.Post("/scripts/{id}/duplicate", h.DuplicateScript)
+		r.With(RequireAdmin).Post("/tables", h.CreateTable)
+		r.With(RequireAdmin).Delete("/tables/{id}", h.DeleteTable)
+		r.With(RequireAdmin).Put("/tables/{id}/rename", h.RenameTable)
+		r.With(RequireAdmin).Post("/tables/{id}/duplicate", h.DuplicateTable)
+		r.With(RequireAdmin).Post("/tables/{id}/truncate", h.TruncateTable)
+		r.With(RequireAdmin).Post("/tables/{id}/columns", h.AddColumn)
+		r.With(RequireAdmin).Put("/tables/{id}/columns/{columnId}", h.UpdateColumn)
+		r.With(RequireAdmin).Delete("/tables/{id}/columns/{columnId}", h.DeleteColumn)
+	}
+	occurrences := func(prefix string) func(r chi.Router) {
+		root := rootPath(prefix)
+		return func(r chi.Router) {
+			r.Get(root, h.ListOccurrences)
+			r.With(RequireAdmin).Post(root, h.CreateOccurrence)
+			r.With(RequireAdmin).Put(prefix+"/{id}", h.UpdateOccurrence)
+			r.With(RequireAdmin).Delete(prefix+"/{id}", h.DeleteOccurrence)
+		}
+	}
+	relationships := func(prefix string) func(r chi.Router) {
+		root := rootPath(prefix)
+		return func(r chi.Router) {
+			r.Get(root, h.ListRelationships)
+			r.With(RequireAdmin).Post(root, h.CreateRelationship)
+			r.With(RequireAdmin).Put(prefix+"/{id}", h.UpdateRelationship)
+			r.With(RequireAdmin).Delete(prefix+"/{id}", h.DeleteRelationship)
+		}
+	}
+	layouts := func(prefix string) func(r chi.Router) {
+		root := rootPath(prefix)
+		return func(r chi.Router) {
+			r.Get(root, h.ListLayouts)
+			r.With(RequireAdmin).Post(root, h.CreateLayout)
+			r.Get(prefix+"/{id}", h.GetLayout)
+			r.Put(prefix+"/{id}", h.UpdateLayout) // per-layout check inside the handler
+			r.With(RequireAdmin).Delete(prefix+"/{id}", h.DeleteLayout)
+		}
+	}
+	scripts := func(prefix string) func(r chi.Router) {
+		root := rootPath(prefix)
+		return func(r chi.Router) {
+			r.Get(root, h.ListScripts)
+			r.With(RequireAdmin).Post(root, h.CreateScript)
+			r.Get(prefix+"/{id}", h.GetScript)
+			r.With(RequireAdmin).Put(prefix+"/{id}", h.UpdateScript)
+			r.With(RequireAdmin).Delete(prefix+"/{id}", h.DeleteScript)
+			r.With(RequireAdmin).Post(prefix+"/{id}/duplicate", h.DuplicateScript)
+		}
+	}
+
+	r.Route("/api/v1/schemas", func(r chi.Router) {
+		r.Use(RequireSession)
+		tables(r)
+		occurrences("/occurrences")(r)
+		relationships("/relationships")(r)
+		layouts("/layouts")(r)
+		scripts("/scripts")(r)
 	})
 
-	// Also support top-level /api/v1/occurrences
+	// Top-level aliases kept for backwards compatibility
 	r.Route("/api/v1/occurrences", func(r chi.Router) {
-		r.Get("/", h.ListOccurrences)
-		r.Post("/", h.CreateOccurrence)
-		r.Put("/{id}", h.UpdateOccurrence)
-		r.Delete("/{id}", h.DeleteOccurrence)
+		r.Use(RequireSession)
+		occurrences("")(r)
 	})
-
-	// Also support top-level /api/v1/relationships
 	r.Route("/api/v1/relationships", func(r chi.Router) {
-		r.Get("/", h.ListRelationships)
-		r.Post("/", h.CreateRelationship)
-		r.Put("/{id}", h.UpdateRelationship)
-		r.Delete("/{id}", h.DeleteRelationship)
+		r.Use(RequireSession)
+		relationships("")(r)
 	})
-
-	// Also support top-level /api/v1/layouts
 	r.Route("/api/v1/layouts", func(r chi.Router) {
-		r.Get("/", h.ListLayouts)
-		r.Post("/", h.CreateLayout)
-		r.Get("/{id}", h.GetLayout)
-		r.Put("/{id}", h.UpdateLayout)
-		r.Delete("/{id}", h.DeleteLayout)
+		r.Use(RequireSession)
+		layouts("")(r)
 	})
-
-	// Also support top-level /api/v1/scripts
 	r.Route("/api/v1/scripts", func(r chi.Router) {
-		r.Get("/", h.ListScripts)
-		r.Post("/", h.CreateScript)
-		r.Get("/{id}", h.GetScript)
-		r.Put("/{id}", h.UpdateScript)
-		r.Delete("/{id}", h.DeleteScript)
-		r.Post("/{id}/duplicate", h.DuplicateScript)
+		r.Use(RequireSession)
+		scripts("")(r)
 	})
 }
 
 func (h *SchemaHandler) ListTables(w http.ResponseWriter, r *http.Request) {
-	tables, err := h.svc.ListTables(r.Context())
+	tables, err := schemaService(r).ListTables(r.Context())
 	if err != nil {
 		telemetry.WriteInternalError(w, r, err)
 		return
@@ -114,7 +139,7 @@ func (h *SchemaHandler) CreateTable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tbl, err := h.svc.CreateTable(r.Context(), req.DisplayName, req.CustomName)
+	tbl, err := schemaService(r).CreateTable(r.Context(), req.DisplayName, req.CustomName)
 	if err != nil {
 		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Schema Error", err.Error())
 		return
@@ -131,7 +156,7 @@ func (h *SchemaHandler) DeleteTable(w http.ResponseWriter, r *http.Request) {
 		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Bad Request", "table id is required")
 		return
 	}
-	if err := h.svc.DeleteTable(r.Context(), tableID); err != nil {
+	if err := schemaService(r).DeleteTable(r.Context(), tableID); err != nil {
 		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Schema Error", err.Error())
 		return
 	}
@@ -157,7 +182,7 @@ func (h *SchemaHandler) RenameTable(w http.ResponseWriter, r *http.Request) {
 		telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "Validation Failed", "display_name is required")
 		return
 	}
-	tbl, err := h.svc.RenameTable(r.Context(), tableID, req.DisplayName)
+	tbl, err := schemaService(r).RenameTable(r.Context(), tableID, req.DisplayName)
 	if err != nil {
 		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Schema Error", err.Error())
 		return
@@ -172,7 +197,7 @@ func (h *SchemaHandler) DuplicateTable(w http.ResponseWriter, r *http.Request) {
 		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Bad Request", "table id is required")
 		return
 	}
-	tbl, err := h.svc.DuplicateTable(r.Context(), tableID)
+	tbl, err := schemaService(r).DuplicateTable(r.Context(), tableID)
 	if err != nil {
 		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Schema Error", err.Error())
 		return
@@ -188,7 +213,7 @@ func (h *SchemaHandler) TruncateTable(w http.ResponseWriter, r *http.Request) {
 		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Bad Request", "table id is required")
 		return
 	}
-	if err := h.svc.TruncateTable(r.Context(), tableID); err != nil {
+	if err := schemaService(r).TruncateTable(r.Context(), tableID); err != nil {
 		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Schema Error", err.Error())
 		return
 	}
@@ -223,7 +248,7 @@ func (h *SchemaHandler) AddColumn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	col, err := h.svc.AddColumn(r.Context(), tableID, schema.ColumnMetadata{
+	col, err := schemaService(r).AddColumn(r.Context(), tableID, schema.ColumnMetadata{
 		Name:               req.Name,
 		DisplayName:        req.DisplayName,
 		FieldType:          req.FieldType,
@@ -291,7 +316,7 @@ func (h *SchemaHandler) UpdateColumn(w http.ResponseWriter, r *http.Request) {
 		opts.ValidationRules = req.ValidationRules
 	}
 
-	col, err := h.svc.UpdateColumn(r.Context(), tableID, columnID, opts)
+	col, err := schemaService(r).UpdateColumn(r.Context(), tableID, columnID, opts)
 	if err != nil {
 		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Schema Error", err.Error())
 		return
@@ -309,7 +334,7 @@ func (h *SchemaHandler) DeleteColumn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.svc.DeleteColumn(r.Context(), tableID, columnID); err != nil {
+	if err := schemaService(r).DeleteColumn(r.Context(), tableID, columnID); err != nil {
 		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Schema Error", err.Error())
 		return
 	}
@@ -318,7 +343,7 @@ func (h *SchemaHandler) DeleteColumn(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *SchemaHandler) ListOccurrences(w http.ResponseWriter, r *http.Request) {
-	occurrences, err := h.svc.ListTableOccurrences(r.Context())
+	occurrences, err := schemaService(r).ListTableOccurrences(r.Context())
 	if err != nil {
 		telemetry.WriteInternalError(w, r, err)
 		return
@@ -339,7 +364,7 @@ func (h *SchemaHandler) CreateOccurrence(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	occ, err := h.svc.CreateTableOccurrence(r.Context(), input)
+	occ, err := schemaService(r).CreateTableOccurrence(r.Context(), input)
 	if err != nil {
 		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Schema Error", err.Error())
 		return
@@ -363,7 +388,7 @@ func (h *SchemaHandler) UpdateOccurrence(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	occ, err := h.svc.UpdateTableOccurrence(r.Context(), id, input)
+	occ, err := schemaService(r).UpdateTableOccurrence(r.Context(), id, input)
 	if err != nil {
 		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Schema Error", err.Error())
 		return
@@ -380,7 +405,7 @@ func (h *SchemaHandler) DeleteOccurrence(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if err := h.svc.DeleteTableOccurrence(r.Context(), id); err != nil {
+	if err := schemaService(r).DeleteTableOccurrence(r.Context(), id); err != nil {
 		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Schema Error", err.Error())
 		return
 	}
@@ -389,7 +414,7 @@ func (h *SchemaHandler) DeleteOccurrence(w http.ResponseWriter, r *http.Request)
 }
 
 func (h *SchemaHandler) ListRelationships(w http.ResponseWriter, r *http.Request) {
-	relationships, err := h.svc.ListRelationships(r.Context())
+	relationships, err := schemaService(r).ListRelationships(r.Context())
 	if err != nil {
 		telemetry.WriteInternalError(w, r, err)
 		return
@@ -410,7 +435,7 @@ func (h *SchemaHandler) CreateRelationship(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	rel, err := h.svc.CreateRelationship(r.Context(), input)
+	rel, err := schemaService(r).CreateRelationship(r.Context(), input)
 	if err != nil {
 		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Schema Error", err.Error())
 		return
@@ -434,7 +459,7 @@ func (h *SchemaHandler) UpdateRelationship(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	rel, err := h.svc.UpdateRelationship(r.Context(), id, input)
+	rel, err := schemaService(r).UpdateRelationship(r.Context(), id, input)
 	if err != nil {
 		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Schema Error", err.Error())
 		return
@@ -451,7 +476,7 @@ func (h *SchemaHandler) DeleteRelationship(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	if err := h.svc.DeleteRelationship(r.Context(), id); err != nil {
+	if err := schemaService(r).DeleteRelationship(r.Context(), id); err != nil {
 		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Schema Error", err.Error())
 		return
 	}
@@ -460,10 +485,33 @@ func (h *SchemaHandler) DeleteRelationship(w http.ResponseWriter, r *http.Reques
 }
 
 func (h *SchemaHandler) ListLayouts(w http.ResponseWriter, r *http.Request) {
-	layouts, err := h.svc.ListLayouts(r.Context())
+	svc := schemaService(r)
+	layouts, err := svc.ListLayouts(r.Context())
 	if err != nil {
 		telemetry.WriteInternalError(w, r, err)
 		return
+	}
+
+	// Regular users do not get layouts they were explicitly denied
+	if sess := currentSession(r); !sess.IsAdmin() {
+		perms, err := svc.GetUserPermissions(r.Context(), sess.UserID)
+		if err != nil {
+			telemetry.WriteInternalError(w, r, err)
+			return
+		}
+		denied := make(map[string]struct{})
+		for _, p := range perms {
+			if p.AccessLevel == schema.AccessNone {
+				denied[p.LayoutID] = struct{}{}
+			}
+		}
+		visible := layouts[:0]
+		for _, l := range layouts {
+			if _, hidden := denied[l.ID]; !hidden {
+				visible = append(visible, l)
+			}
+		}
+		layouts = visible
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(layouts)
@@ -486,7 +534,7 @@ func (h *SchemaHandler) CreateLayout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	layout, err := h.svc.CreateLayout(r.Context(), req.Name, req.TableOccurrenceID, req.Definition)
+	layout, err := schemaService(r).CreateLayout(r.Context(), req.Name, req.TableOccurrenceID, req.Definition)
 	if err != nil {
 		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Schema Error", err.Error())
 		return
@@ -498,7 +546,19 @@ func (h *SchemaHandler) CreateLayout(w http.ResponseWriter, r *http.Request) {
 
 func (h *SchemaHandler) GetLayout(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	layout, err := h.svc.GetLayout(r.Context(), id)
+	svc := schemaService(r)
+	if sess := currentSession(r); !sess.IsAdmin() {
+		level, err := svc.LayoutAccess(r.Context(), sess.UserID, id)
+		if err != nil {
+			telemetry.WriteInternalError(w, r, err)
+			return
+		}
+		if level == schema.AccessNone {
+			writeForbidden(w, r, "you do not have access to this layout")
+			return
+		}
+	}
+	layout, err := svc.GetLayout(r.Context(), id)
 	if err != nil {
 		telemetry.WriteProblem(w, r, http.StatusNotFound, "Layout Not Found", err.Error())
 		return
@@ -520,7 +580,20 @@ func (h *SchemaHandler) UpdateLayout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	layout, err := h.svc.UpdateLayout(r.Context(), id, req.Name, req.Definition)
+	svc := schemaService(r)
+	if sess := currentSession(r); !sess.IsAdmin() {
+		level, err := svc.LayoutAccess(r.Context(), sess.UserID, id)
+		if err != nil {
+			telemetry.WriteInternalError(w, r, err)
+			return
+		}
+		if level != schema.AccessReadWrite {
+			writeForbidden(w, r, "you do not have write access to this layout")
+			return
+		}
+	}
+
+	layout, err := svc.UpdateLayout(r.Context(), id, req.Name, req.Definition)
 	if err != nil {
 		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Schema Error", err.Error())
 		return
@@ -531,7 +604,7 @@ func (h *SchemaHandler) UpdateLayout(w http.ResponseWriter, r *http.Request) {
 
 func (h *SchemaHandler) DeleteLayout(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	if err := h.svc.DeleteLayout(r.Context(), id); err != nil {
+	if err := schemaService(r).DeleteLayout(r.Context(), id); err != nil {
 		telemetry.WriteInternalError(w, r, err)
 		return
 	}
@@ -539,7 +612,7 @@ func (h *SchemaHandler) DeleteLayout(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *SchemaHandler) ListScripts(w http.ResponseWriter, r *http.Request) {
-	scripts, err := h.svc.ListScripts(r.Context())
+	scripts, err := schemaService(r).ListScripts(r.Context())
 	if err != nil {
 		telemetry.WriteInternalError(w, r, err)
 		return
@@ -550,7 +623,7 @@ func (h *SchemaHandler) ListScripts(w http.ResponseWriter, r *http.Request) {
 
 func (h *SchemaHandler) GetScript(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	script, err := h.svc.GetScript(r.Context(), id)
+	script, err := schemaService(r).GetScript(r.Context(), id)
 	if err != nil {
 		telemetry.WriteProblem(w, r, http.StatusNotFound, "Script Not Found", err.Error())
 		return
@@ -581,7 +654,7 @@ func (h *SchemaHandler) CreateScript(w http.ResponseWriter, r *http.Request) {
 	if req.IsActive != nil {
 		active = *req.IsActive
 	}
-	script, err := h.svc.CreateScript(r.Context(), req.Name, req.ContextTable, req.FolderID, active, req.Steps)
+	script, err := schemaService(r).CreateScript(r.Context(), req.Name, req.ContextTable, req.FolderID, active, req.Steps)
 	if err != nil {
 		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Script Error", err.Error())
 		return
@@ -614,7 +687,7 @@ func (h *SchemaHandler) UpdateScript(w http.ResponseWriter, r *http.Request) {
 	if req.IsActive != nil {
 		active = *req.IsActive
 	}
-	script, err := h.svc.UpdateScript(r.Context(), id, req.Name, req.ContextTable, req.FolderID, active, req.Steps)
+	script, err := schemaService(r).UpdateScript(r.Context(), id, req.Name, req.ContextTable, req.FolderID, active, req.Steps)
 	if err != nil {
 		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Script Error", err.Error())
 		return
@@ -625,7 +698,7 @@ func (h *SchemaHandler) UpdateScript(w http.ResponseWriter, r *http.Request) {
 
 func (h *SchemaHandler) DeleteScript(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	if err := h.svc.DeleteScript(r.Context(), id); err != nil {
+	if err := schemaService(r).DeleteScript(r.Context(), id); err != nil {
 		telemetry.WriteInternalError(w, r, err)
 		return
 	}
@@ -634,7 +707,7 @@ func (h *SchemaHandler) DeleteScript(w http.ResponseWriter, r *http.Request) {
 
 func (h *SchemaHandler) DuplicateScript(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	script, err := h.svc.DuplicateScript(r.Context(), id)
+	script, err := schemaService(r).DuplicateScript(r.Context(), id)
 	if err != nil {
 		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Duplicate Script Error", err.Error())
 		return

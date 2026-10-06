@@ -1,0 +1,11 @@
+# Keep the Docker build context small and independent of local build output
+.dart_tool/
+build/
+.idea/
+*.iml
+.flutter-plugins
+.flutter-plugins-dependencies
+macos/Pods/
+macos/Flutter/ephemeral/
+linux/flutter/ephemeral/
+windows/flutter/ephemeral/
