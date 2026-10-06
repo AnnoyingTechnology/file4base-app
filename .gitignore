@@ -51,6 +51,7 @@ client/linux/flutter/ephemeral/
 
 # Database / Local storage mounts
 postgres_data/
+backups/
 mariadb_data/
 *.db
 *.sqlite

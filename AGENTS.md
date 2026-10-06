@@ -11,7 +11,7 @@
 - **Semantic Versioning (SemVer 2.0.0)** is strictly mandatory (`MAJOR.MINOR.PATCH`).
 - Single source of truth is the root `VERSION` file.
 - **Always update `CHANGELOG.md`** whenever a feature, fix, or breaking change is committed.
-- When bumping version, synchronize across `VERSION`, `server/cmd/server/main.go` (`AppVersion`), `client/pubspec.yaml`, `client/windows/runner/Runner.rc`, and about dialogs.
+- When bumping version, synchronize across `VERSION`, `server/cmd/server/main.go` (`AppVersion`), `client/pubspec.yaml`, `client/windows/runner/Runner.rc`, about dialogs, `openapi.json`, and the Docker image tags in `docker-compose.yml` (use `scripts/bump_version.sh`).
 - Detailed rule: `.agents/rules/versioning.md`.
 
 ### Documentation Maintenance

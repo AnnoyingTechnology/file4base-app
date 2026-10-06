@@ -9,6 +9,9 @@ VERSION_FILE="${ROOT_DIR}/VERSION"
 SERVER_MAIN="${ROOT_DIR}/server/cmd/server/main.go"
 CLIENT_PUBSPEC="${ROOT_DIR}/client/pubspec.yaml"
 WIN_RC="${ROOT_DIR}/client/windows/runner/Runner.rc"
+ABOUT_DIALOG="${ROOT_DIR}/client/lib/features/about/about_dialog.dart"
+OPENAPI_SPEC="${ROOT_DIR}/server/internal/api/swagger/ui/openapi.json"
+COMPOSE_FILE="${ROOT_DIR}/docker-compose.yml"
 
 if [ ! -f "${VERSION_FILE}" ]; then
     echo "0.2.0" > "${VERSION_FILE}"
@@ -69,6 +72,27 @@ if [ -f "${CLIENT_PUBSPEC}" ]; then
     sed -i.bak "s/^version: .*/version: ${NEW_VERSION}+${NEW_BUILD}/" "${CLIENT_PUBSPEC}"
     rm -f "${CLIENT_PUBSPEC}.bak"
     echo "Updated ${CLIENT_PUBSPEC}"
+fi
+
+# 4. Update About dialog displayed version
+if [ -f "${ABOUT_DIALOG}" ]; then
+    sed -i.bak "s/_version = '.*';/_version = '${NEW_VERSION}';/" "${ABOUT_DIALOG}"
+    rm -f "${ABOUT_DIALOG}.bak"
+    echo "Updated ${ABOUT_DIALOG}"
+fi
+
+# 5. Update OpenAPI spec version
+if [ -f "${OPENAPI_SPEC}" ]; then
+    sed -i.bak "s/^    \"version\": \".*\",/    \"version\": \"${NEW_VERSION}\",/" "${OPENAPI_SPEC}"
+    rm -f "${OPENAPI_SPEC}.bak"
+    echo "Updated ${OPENAPI_SPEC}"
+fi
+
+# 6. Update default Docker image tags in docker-compose.yml
+if [ -f "${COMPOSE_FILE}" ]; then
+    sed -i.bak -E "s/(FILE4BASE_VERSION:-)[^}]+}/\1${NEW_VERSION}}/g" "${COMPOSE_FILE}"
+    rm -f "${COMPOSE_FILE}.bak"
+    echo "Updated ${COMPOSE_FILE}"
 fi
 
 echo "=================================================="

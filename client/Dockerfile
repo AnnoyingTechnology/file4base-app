@@ -3,7 +3,9 @@
 # `docker compose up` works on a clean clone without a local Flutter SDK.
 
 # ---- Stage 1: build the Flutter web bundle ----
-FROM ghcr.io/cirruslabs/flutter:stable AS builder
+# The web bundle is platform independent: build it once on the build host's
+# platform and reuse it for every target platform of the Nginx image.
+FROM --platform=$BUILDPLATFORM ghcr.io/cirruslabs/flutter:stable AS builder
 
 WORKDIR /app
 

@@ -59,6 +59,35 @@ volume: existing volumes keep their databases and data, which remain available
 in the database selector. Do not remove a volume to change this behavior unless
 you intend to delete its persisted data.
 
+#### Images and versions
+The images are published on Docker Hub for `linux/amd64` and `linux/arm64`:
+[`marioezquerro/file4base-api`](https://hub.docker.com/r/marioezquerro/file4base-api) and
+[`marioezquerro/file4base-web`](https://hub.docker.com/r/marioezquerro/file4base-web),
+tagged with the version in the root `VERSION` file (and `latest`).
+
+```bash
+docker compose pull && docker compose up -d   # run the published images
+docker compose up -d --build                  # or build them locally
+./scripts/publish_images.sh                   # maintainers: build and push a release
+```
+
+Set `FILE4BASE_VERSION` (tag) or `FILE4BASE_REGISTRY` (Docker Hub namespace)
+in `.env` to run another release or registry.
+
+#### Data persistence and backups
+PostgreSQL stores all its databases in the named Docker volume
+`file4base-postgres-data`. It survives `docker compose down` and image rebuilds;
+only `docker compose down -v` or `docker volume rm` delete it.
+
+```bash
+# Back up every database (and roles) to backups/file4base-postgres-v<version>-<date>.sql.gz
+./scripts/backup_postgres.sh backup
+
+# List backups / restore one (asks for confirmation, stops the API meanwhile)
+./scripts/backup_postgres.sh list
+./scripts/backup_postgres.sh restore backups/<file>.sql.gz
+```
+
 ### 2. Standalone Desktop Client (macOS / Windows / Linux)
 The native desktop client runs locally on developer workstations (including Apple Silicon M-series Macs, Windows, and Linux):
 - Connects through configurable port (default: `http://localhost:8080`), with interactive Host & Port Settings dialog (accessible by clicking the server status pill in the AppBar).

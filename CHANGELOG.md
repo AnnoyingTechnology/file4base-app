@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-10-06
+
+### Added
+- Docker Hub distribution: `marioezquerro/file4base-api` and `marioezquerro/file4base-web` multi-arch images (`linux/amd64`, `linux/arm64`), published with `scripts/publish_images.sh` under the version tag and `latest`.
+- `scripts/backup_postgres.sh` to back up and restore every PostgreSQL database of the `file4base-postgres-data` volume (`backup`, `list`, `restore`).
+
+### Changed
+- Docker images are tagged with the application version instead of `latest`; `docker-compose.yml` references the Docker Hub images (`docker compose pull`) and still builds them locally with `--build`. `FILE4BASE_VERSION` and `FILE4BASE_REGISTRY` override the tag and namespace.
+- Dockerfiles cross-compile on the build host's platform, so multi-arch builds need no emulation.
+- The web client image is renamed from `file4base-app-web` to `file4base-web`, following the `file4base-` naming convention.
+- `scripts/bump_version.sh` also synchronizes the About dialog, the OpenAPI spec and the image tags in `docker-compose.yml`.
+- Documented data persistence of the PostgreSQL volume and the backup workflow.
+
 ## [0.5.0] - 2026-10-06
 
 ### Security

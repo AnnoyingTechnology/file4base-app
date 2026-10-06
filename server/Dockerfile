@@ -1,5 +1,9 @@
 # Multi-stage Dockerfile for File4Base Go Backend
-FROM golang:1.26-alpine AS builder
+# The builder runs on the build host's platform and cross-compiles for the
+# target platform, so multi-arch builds (amd64 + arm64) need no emulation.
+FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS builder
+ARG TARGETOS=linux
+ARG TARGETARCH
 
 WORKDIR /app
 
@@ -14,7 +18,7 @@ RUN go mod download
 # Copy source code and build
 COPY . .
 ENV GOTOOLCHAIN=auto
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o /app/server ./cmd/server
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags="-w -s" -o /app/server ./cmd/server
 
 # Minimal production image
 FROM alpine:3.20

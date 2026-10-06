@@ -1,6 +1,15 @@
 # Credentials and network exposure are configurable through a `.env` file next
 # to this file (see `.env.example`). The fallback values are for local
 # development only: set POSTGRES_PASSWORD before exposing the stack to a network.
+#
+# The file4base-api and file4base-web images are published on Docker Hub as
+# ${FILE4BASE_REGISTRY}/file4base-api and ${FILE4BASE_REGISTRY}/file4base-web,
+# tagged with the application version:
+#   docker compose pull && docker compose up -d   # use the published images
+#   docker compose up -d --build                  # build them locally instead
+# The default tag below must match the root `VERSION` file (kept in sync by
+# scripts/bump_version.sh); FILE4BASE_VERSION in `.env` overrides it.
+# Publish a release with scripts/publish_images.sh.
 services:
   # Primary Database Engine: PostgreSQL
   postgres:
@@ -15,6 +24,9 @@ services:
       # Published on the loopback interface only by default
       - "${DB_BIND_ADDRESS:-127.0.0.1}:5432:5432"
     volumes:
+      # Persistent named volume `file4base-postgres-data`: survives
+      # `docker compose down` (only `down -v` deletes it). Backups:
+      # scripts/backup_postgres.sh
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U file4base -d postgres"]
@@ -52,7 +64,7 @@ services:
     build:
       context: ./server
       dockerfile: Dockerfile
-    image: file4base-api
+    image: ${FILE4BASE_REGISTRY:-marioezquerro}/file4base-api:${FILE4BASE_VERSION:-0.5.1}
     container_name: file4base-api
     restart: unless-stopped
     ports:
@@ -89,7 +101,7 @@ services:
     build:
       context: ./client
       dockerfile: Dockerfile
-    image: file4base-app-web
+    image: ${FILE4BASE_REGISTRY:-marioezquerro}/file4base-web:${FILE4BASE_VERSION:-0.5.1}
     container_name: file4base-web
     restart: unless-stopped
     ports:
