@@ -116,11 +116,144 @@ class LayoutObjectStyle {
         if (textColor != null) 'text_color': textColor,
         'text_align': textAlign,
       };
+
+  /// Copies the style. The `clear*` flags reset a nullable color to "none",
+  /// which a plain null argument cannot express.
+  LayoutObjectStyle copyWith({
+    String? fillColor,
+    String? borderColor,
+    double? borderWidth,
+    double? cornerRadius,
+    double? fontSize,
+    String? fontWeight,
+    String? textColor,
+    String? textAlign,
+    bool clearFillColor = false,
+    bool clearBorderColor = false,
+    bool clearTextColor = false,
+  }) {
+    return LayoutObjectStyle(
+      fillColor: clearFillColor ? null : (fillColor ?? this.fillColor),
+      borderColor: clearBorderColor ? null : (borderColor ?? this.borderColor),
+      borderWidth: borderWidth ?? this.borderWidth,
+      cornerRadius: cornerRadius ?? this.cornerRadius,
+      fontSize: fontSize ?? this.fontSize,
+      fontWeight: fontWeight ?? this.fontWeight,
+      textColor: clearTextColor ? null : (textColor ?? this.textColor),
+      textAlign: textAlign ?? this.textAlign,
+    );
+  }
+}
+
+/// Action run when a button is clicked in Browse mode.
+///
+/// `type` is `single_step` (one script step, `stepType` + `params`, using the
+/// same step types and parameters as the Script Workspace) or `perform_script`
+/// (a stored script referenced by `scriptId` / `scriptName`, with an optional
+/// `parameter`).
+class ButtonActionModel {
+  final String type;
+  final String? stepType;
+  final Map<String, dynamic> params;
+  final String? scriptId;
+  final String? scriptName;
+  final String? parameter;
+
+  const ButtonActionModel({
+    required this.type,
+    this.stepType,
+    this.params = const {},
+    this.scriptId,
+    this.scriptName,
+    this.parameter,
+  });
+
+  const ButtonActionModel.singleStep(String step, {Map<String, dynamic> params = const {}})
+      : this(type: 'single_step', stepType: step, params: params);
+
+  const ButtonActionModel.performScript({required String id, required String name, String? parameter})
+      : this(type: 'perform_script', scriptId: id, scriptName: name, parameter: parameter);
+
+  bool get isPerformScript => type == 'perform_script';
+
+  factory ButtonActionModel.fromJson(Map<String, dynamic> json) {
+    return ButtonActionModel(
+      type: json['type'] as String? ?? 'single_step',
+      stepType: json['step_type'] as String?,
+      params: json['params'] is Map ? Map<String, dynamic>.from(json['params'] as Map) : const {},
+      scriptId: json['script_id'] as String?,
+      scriptName: json['script_name'] as String?,
+      parameter: json['parameter'] as String?,
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+        'type': type,
+        if (stepType != null) 'step_type': stepType,
+        if (params.isNotEmpty) 'params': params,
+        if (scriptId != null) 'script_id': scriptId,
+        if (scriptName != null) 'script_name': scriptName,
+        if (parameter != null && parameter!.isNotEmpty) 'parameter': parameter,
+      };
+}
+
+/// Picture, PDF, audio/video or file embedded in a layout object.
+///
+/// The content is stored inline as base64 (`data`) so the layout stays
+/// self-contained, or referenced by `url`. `fit` applies to pictures:
+/// `contain`, `cover` or `fill`.
+class LayoutMediaModel {
+  final String kind; // 'image', 'pdf', 'video', 'audio', 'file'
+  final String name;
+  final String? mimeType;
+  final String? data;
+  final String? url;
+  final String fit;
+
+  const LayoutMediaModel({
+    required this.kind,
+    required this.name,
+    this.mimeType,
+    this.data,
+    this.url,
+    this.fit = 'contain',
+  });
+
+  bool get isImage => kind == 'image';
+
+  factory LayoutMediaModel.fromJson(Map<String, dynamic> json) {
+    return LayoutMediaModel(
+      kind: json['kind'] as String? ?? 'file',
+      name: json['name'] as String? ?? '',
+      mimeType: json['mime_type'] as String?,
+      data: json['data'] as String?,
+      url: json['url'] as String?,
+      fit: json['fit'] as String? ?? 'contain',
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+        'kind': kind,
+        'name': name,
+        if (mimeType != null) 'mime_type': mimeType,
+        if (data != null) 'data': data,
+        if (url != null) 'url': url,
+        'fit': fit,
+      };
+
+  LayoutMediaModel copyWith({String? fit}) => LayoutMediaModel(
+        kind: kind,
+        name: name,
+        mimeType: mimeType,
+        data: data,
+        url: url,
+        fit: fit ?? this.fit,
+      );
 }
 
 class LayoutObjectModel {
   final String id;
-  final String type; // 'field', 'label', 'button', 'button_bar', 'portal', 'tab_control', 'slide_control', 'popover_button', 'chart', 'web_viewer', 'rect', 'rounded_rect', 'oval', 'line'
+  final String type; // 'field', 'label', 'button', 'button_bar', 'portal', 'tab_control', 'slide_control', 'popover_button', 'chart', 'web_viewer', 'rect', 'rounded_rect', 'oval', 'line', 'media'
   final double x;
   final double y;
   final double width;
@@ -133,6 +266,9 @@ class LayoutObjectModel {
   final Map<String, bool>? anchors; // top, bottom, left, right
   final bool isLocked;
   final Map<String, dynamic>? portalConfig;
+  final ButtonActionModel? action; // buttons: what a click runs in Browse mode
+  final int? tabOrder; // position in the Tab key sequence (1-based); null = reading order
+  final LayoutMediaModel? media; // picture / document shown inside the object
 
   const LayoutObjectModel({
     required this.id,
@@ -149,7 +285,19 @@ class LayoutObjectModel {
     this.anchors,
     this.isLocked = false,
     this.portalConfig,
+    this.action,
+    this.tabOrder,
+    this.media,
   });
+
+  /// Objects that take keyboard focus in Browse mode and so have a tab order.
+  bool get isTabStop => type == 'field' || type == 'button' || type == 'popover_button';
+
+  /// Objects that display their `text` (labels, buttons and drawn shapes).
+  bool get hasEditableText =>
+      type == 'label' || type == 'button' || type == 'popover_button' || isShape;
+
+  bool get isShape => type == 'rect' || type == 'rounded_rect' || type == 'oval';
 
   factory LayoutObjectModel.fromJson(Map<String, dynamic> json) {
     return LayoutObjectModel(
@@ -173,6 +321,13 @@ class LayoutObjectModel {
       ),
       isLocked: json['is_locked'] as bool? ?? false,
       portalConfig: json['portal_config'] as Map<String, dynamic>?,
+      action: json['action'] is Map
+          ? ButtonActionModel.fromJson(Map<String, dynamic>.from(json['action'] as Map))
+          : null,
+      tabOrder: (json['tab_order'] as num?)?.toInt(),
+      media: json['media'] is Map
+          ? LayoutMediaModel.fromJson(Map<String, dynamic>.from(json['media'] as Map))
+          : null,
     );
   }
 
@@ -191,8 +346,13 @@ class LayoutObjectModel {
         if (anchors != null) 'anchors': anchors,
         if (isLocked) 'is_locked': true,
         if (portalConfig != null) 'portal_config': portalConfig,
+        if (action != null) 'action': action!.toJson(),
+        if (tabOrder != null) 'tab_order': tabOrder,
+        if (media != null) 'media': media!.toJson(),
       };
 
+  /// Copies the object. The `clear*` flags remove an optional value, which a
+  /// plain null argument cannot express.
   LayoutObjectModel copyWith({
     String? id,
     String? type,
@@ -208,6 +368,12 @@ class LayoutObjectModel {
     Map<String, bool>? anchors,
     bool? isLocked,
     Map<String, dynamic>? portalConfig,
+    ButtonActionModel? action,
+    int? tabOrder,
+    LayoutMediaModel? media,
+    bool clearAction = false,
+    bool clearTabOrder = false,
+    bool clearMedia = false,
   }) {
     return LayoutObjectModel(
       id: id ?? this.id,
@@ -224,6 +390,9 @@ class LayoutObjectModel {
       anchors: anchors ?? this.anchors,
       isLocked: isLocked ?? this.isLocked,
       portalConfig: portalConfig ?? this.portalConfig,
+      action: clearAction ? null : (action ?? this.action),
+      tabOrder: clearTabOrder ? null : (tabOrder ?? this.tabOrder),
+      media: clearMedia ? null : (media ?? this.media),
     );
   }
 }

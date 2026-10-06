@@ -1,8 +1,11 @@
 import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../core/api/api_client.dart';
 import '../../main.dart';
+import '../layout_engine/layout_action_runner.dart';
+import '../layout_engine/layout_object_visuals.dart';
 import '../layout_engine/models/layout_definition.dart';
 
 class DataBrowserWidget extends StatefulWidget {
@@ -14,6 +17,13 @@ class DataBrowserWidget extends StatefulWidget {
   final void Function(int currentIndex, int totalRecords)? onRecordChanged;
   final VoidCallback? onTableModified;
 
+  /// Signed-in user, shown by `{{CurrentUser}}` in layout text.
+  final String? currentUserName;
+
+  /// Switches to the layout with this name (button "Go to Layout" steps).
+  /// Returns false when there is no such layout.
+  final bool Function(String layoutName)? onGoToLayout;
+
   const DataBrowserWidget({
     super.key,
     required this.table,
@@ -23,13 +33,15 @@ class DataBrowserWidget extends StatefulWidget {
     this.onModeChanged,
     this.onRecordChanged,
     this.onTableModified,
+    this.currentUserName,
+    this.onGoToLayout,
   });
 
   @override
   State<DataBrowserWidget> createState() => DataBrowserWidgetState();
 }
 
-class DataBrowserWidgetState extends State<DataBrowserWidget> {
+class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutActionHost {
   List<Map<String, dynamic>> _records = [];
   bool _isLoading = true;
   String? _error;
@@ -738,6 +750,9 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> {
     final totalPartsHeight = layout.parts.fold<double>(0.0, (acc, p) => acc + p.height);
     final canvasHeight = math.max(math.max(totalPartsHeight, maxObjY + 60.0), 520.0);
     final canvasWidth = math.max(layout.width, 760.0);
+    final tabRank = {
+      for (final (i, o) in sortLayoutTabStops(layout.objects.where((o) => o.isTabStop)).indexed) o.id: i + 1,
+    };
 
     return SingleChildScrollView(
       scrollDirection: Axis.vertical,
@@ -843,23 +858,32 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> {
                     ),
                   ],
                 ),
-                child: Stack(
-                  clipBehavior: Clip.none,
-                  children: [
-                    // Subtle part boundaries
-                    ..._buildPartDividers(layout, canvasWidth, isDark),
+                // The Tab key follows the layout's tab order (Set Tab Order in Layout mode).
+                child: FocusTraversalGroup(
+                  policy: OrderedTraversalPolicy(),
+                  child: Stack(
+                    clipBehavior: Clip.none,
+                    children: [
+                      // Subtle part boundaries
+                      ..._buildPartDividers(layout, canvasWidth, isDark),
 
-                    // Render layout objects
-                    ...layout.objects.map((obj) {
-                      return Positioned(
-                        left: obj.x,
-                        top: obj.y,
-                        width: obj.width,
-                        height: obj.height,
-                        child: _buildLayoutObject(obj, record, isDark, isFindMode),
-                      );
-                    }),
-                  ],
+                      // Render layout objects
+                      ...layout.objects.map((obj) {
+                        Widget child = _buildLayoutObject(obj, record, isDark, isFindMode);
+                        final rank = tabRank[obj.id];
+                        if (rank != null) {
+                          child = FocusTraversalOrder(order: NumericFocusOrder(rank.toDouble()), child: child);
+                        }
+                        return Positioned(
+                          left: obj.x,
+                          top: obj.y,
+                          width: obj.width,
+                          height: obj.height,
+                          child: child,
+                        );
+                      }),
+                    ],
+                  ),
                 ),
               ),
             ],
@@ -877,7 +901,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> {
           alignment: _parseAlignment(obj.style.textAlign),
           padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
           child: Text(
-            obj.text,
+            isFindMode ? obj.text : actionResolveText(obj.text),
             textAlign: _parseTextAlign(obj.style.textAlign),
             style: TextStyle(
               fontSize: obj.style.fontSize > 0 ? obj.style.fontSize : 13,
@@ -1048,15 +1072,22 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> {
         );
 
       case 'button':
-        final btnText = obj.text.isEmpty ? 'Button' : obj.text;
+      case 'popover_button':
+        final btnText = actionResolveText(obj.text.isEmpty ? 'Button' : obj.text);
+        final btnBorder = parseLayoutColor(obj.style.borderColor);
         return ElevatedButton(
           style: ElevatedButton.styleFrom(
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            backgroundColor: parseLayoutColor(obj.style.fillColor),
+            foregroundColor: parseLayoutColor(obj.style.textColor),
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(obj.style.cornerRadius),
+              side: btnBorder == null || obj.style.borderWidth <= 0
+                  ? BorderSide.none
+                  : BorderSide(color: btnBorder, width: obj.style.borderWidth),
             ),
           ),
-          onPressed: () => _handleLayoutButtonClick(btnText),
+          onPressed: isFindMode && obj.action == null ? null : () => _handleLayoutButtonClick(obj, btnText),
           child: Text(
             btnText,
             style: TextStyle(
@@ -1103,6 +1134,9 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> {
         );
 
       default:
+        final drawn = buildDrawnLayoutObject(obj,
+            record: isFindMode ? null : record, userName: widget.currentUserName, pageNumber: 1);
+        if (drawn != null) return drawn;
         return Container(
           decoration: BoxDecoration(
             color: obj.style.fillColor != null
@@ -1120,7 +1154,162 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> {
     }
   }
 
-  void _handleLayoutButtonClick(String label) {
+  /// Runs the button's assigned action. Buttons from older layouts without an
+  /// action keep the previous behaviour, guessed from their label.
+  Future<void> _handleLayoutButtonClick(LayoutObjectModel obj, String label) async {
+    final action = obj.action;
+    if (action == null) {
+      _handleLegacyButtonLabel(label);
+      return;
+    }
+    final result = await LayoutActionRunner(apiClient: widget.apiClient, host: this).run(action);
+    if (!result.completed && mounted && result.message != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(result.message!), backgroundColor: Colors.orange.shade800),
+      );
+    }
+  }
+
+  // ─── LayoutActionHost (button actions and scripts) ─────────────────────────
+
+  Map<String, dynamic> get _currentRecord => _records.isNotEmpty ? _records[_currentIndex] : const {};
+
+  @override
+  String actionResolveText(String text) =>
+      resolveLayoutMergeText(text, record: _currentRecord, userName: widget.currentUserName, pageNumber: 1);
+
+  @override
+  Future<void> actionNewRecord() => _createNewRecord();
+
+  @override
+  Future<void> actionDuplicateRecord() async {
+    if (_records.isEmpty) return;
+    await _saveCurrentRecord();
+    final source = _records[_currentIndex];
+    final copy = <String, dynamic>{
+      for (final col in widget.table.columns)
+        if (!col.isPrimaryKey) col.name: source[col.name],
+    };
+    try {
+      await widget.apiClient.insertRow(widget.table.name, copy);
+      await _fetchRecords();
+      if (_records.isNotEmpty && mounted) {
+        setState(() => _currentIndex = _records.length - 1);
+        _rebuildFieldControllers();
+        widget.onRecordChanged?.call(_currentIndex, _records.length);
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error duplicating record: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
+
+  @override
+  Future<void> actionDeleteRecord({required bool confirm}) async {
+    if (_records.isEmpty) return;
+    if (confirm) {
+      final ok = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Delete Record'),
+          content: const Text('Permanently delete this entire record?'),
+          actions: [
+            TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Cancel')),
+            FilledButton(
+              style: FilledButton.styleFrom(backgroundColor: Colors.red),
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: const Text('Delete'),
+            ),
+          ],
+        ),
+      );
+      if (ok != true) return;
+    }
+    await _deleteCurrentRecord();
+  }
+
+  @override
+  Future<void> actionCommitRecord() async {
+    FocusManager.instance.primaryFocus?.unfocus();
+    await _saveCurrentRecord();
+  }
+
+  @override
+  Future<void> actionRevertRecord() async {
+    FocusManager.instance.primaryFocus?.unfocus();
+    if (mounted) setState(_rebuildFieldControllers);
+  }
+
+  @override
+  Future<void> actionGoToRecord(String target) async {
+    if (_records.isEmpty) return;
+    final t = target.trim().toLowerCase();
+    final index = switch (t) {
+      'first' || 'primero' => 0,
+      'previous' || 'prev' || 'anterior' => _currentIndex - 1,
+      'next' || 'siguiente' => _currentIndex + 1,
+      'last' || 'último' || 'ultimo' => _records.length - 1,
+      _ => (int.tryParse(t) ?? (_currentIndex + 2)) - 1,
+    };
+    goToRecord(index.clamp(0, _records.length - 1));
+  }
+
+  @override
+  Future<void> actionEnterFindMode() async => widget.onModeChanged?.call(OperationalMode.find);
+
+  @override
+  Future<void> actionPerformFind() => _performFind();
+
+  @override
+  Future<void> actionShowAllRecords() async {
+    widget.onModeChanged?.call(OperationalMode.browse);
+    await _fetchRecords();
+  }
+
+  @override
+  Future<void> actionEnterPreviewMode() async => widget.onModeChanged?.call(OperationalMode.preview);
+
+  @override
+  Future<bool> actionGoToLayout(String layoutName) async => widget.onGoToLayout?.call(layoutName) ?? false;
+
+  @override
+  Future<bool> actionSetField(String field, String value) async {
+    final col = widget.table.columns.where((c) => c.name.toLowerCase() == field.toLowerCase()).firstOrNull;
+    if (col == null || col.isPrimaryKey || _records.isEmpty) return col != null && !col.isPrimaryKey;
+    _fieldDebounceTimers[col.name]?.cancel();
+    _fieldControllers[col.name]?.text = value;
+    await _saveField(col.name, value);
+    return true;
+  }
+
+  @override
+  Future<void> actionShowDialog(String title, String message) async {
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(title),
+        content: Text(message),
+        actions: [FilledButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('OK'))],
+      ),
+    );
+  }
+
+  @override
+  Future<void> actionOpenUrl(String url) async {
+    final uri = Uri.tryParse(url);
+    if (uri == null || !(uri.isScheme('http') || uri.isScheme('https') || uri.isScheme('mailto'))) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Cannot open "$url".')));
+      }
+      return;
+    }
+    await launchUrl(uri, mode: LaunchMode.externalApplication);
+  }
+
+  void _handleLegacyButtonLabel(String label) {
     final lower = label.toLowerCase();
     if (lower.contains('new') || lower.contains('nuevo')) {
       createNewRecord();

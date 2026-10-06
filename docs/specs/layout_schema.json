@@ -86,13 +86,62 @@
             "slide_control",
             "popover_button",
             "chart",
-            "web_viewer"
+            "web_viewer",
+            "rect",
+            "rounded_rect",
+            "oval",
+            "line",
+            "media"
           ]
         },
         "x": { "type": "number" },
         "y": { "type": "number" },
         "width": { "type": "number" },
         "height": { "type": "number" },
+        "text": {
+          "type": "string",
+          "description": "Text of labels, buttons and drawn shapes. Merge symbols {{field_name}}, {{CurrentDate}}, {{CurrentTime}}, {{CurrentUser}} and {{PageNumber}} are resolved in Browse and Preview modes."
+        },
+        "name": { "type": "string" },
+        "tooltip": { "type": "string" },
+        "is_locked": { "type": "boolean" },
+        "tab_order": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Position of a field or button in the Tab key sequence. Objects without it follow the numbered ones in reading order (top to bottom, left to right)."
+        },
+        "action": {
+          "type": "object",
+          "description": "What a button runs when clicked in Browse mode.",
+          "required": ["type"],
+          "properties": {
+            "type": { "type": "string", "enum": ["single_step", "perform_script"] },
+            "step_type": {
+              "type": "string",
+              "description": "single_step: new_record, duplicate_record, delete_record, commit_records, revert_record, go_to_record, enter_find_mode, perform_find, show_all_records, enter_preview_mode, go_to_layout, set_field, show_dialog, open_url."
+            },
+            "params": {
+              "type": "object",
+              "description": "Step parameters, named as in the Script Workspace: target, layout_name, field, value, title, message, url."
+            },
+            "script_id": { "type": "string" },
+            "script_name": { "type": "string" },
+            "parameter": { "type": "string" }
+          }
+        },
+        "media": {
+          "type": "object",
+          "description": "Picture, PDF, audio/video or file shown inside a shape (rect, rounded_rect, oval) or a media object. Stored inline as base64 (max 2 MB) or referenced by URL.",
+          "required": ["kind", "name"],
+          "properties": {
+            "kind": { "type": "string", "enum": ["image", "pdf", "video", "audio", "file"] },
+            "name": { "type": "string" },
+            "mime_type": { "type": "string" },
+            "data": { "type": "string", "contentEncoding": "base64" },
+            "url": { "type": "string" },
+            "fit": { "type": "string", "enum": ["contain", "cover", "fill"] }
+          }
+        },
         "anchors": {
           "type": "object",
           "properties": {
@@ -130,8 +179,11 @@
           "type": "object",
           "properties": {
             "fill_color": { "type": "string" },
-            "border_color": { "type": "string" },
-            "border_width": { "type": "number" },
+            "border_color": {
+              "type": "string",
+              "description": "Line color: border of shapes and fields, color of line objects."
+            },
+            "border_width": { "type": "number", "description": "Line width in points; 0 draws no border." },
             "corner_radius": { "type": "number" },
             "font_family": { "type": "string" },
             "font_size": { "type": "number" },

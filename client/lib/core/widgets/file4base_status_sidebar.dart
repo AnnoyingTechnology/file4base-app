@@ -22,6 +22,7 @@ enum LayoutTool {
   part,
   format,
   rotate,
+  tabOrder, // Set Tab Order mode: click fields/buttons in Tab key sequence
 }
 
 // ─── Main Sidebar Widget (StatefulWidget for tool selection) ──────────────────
@@ -54,6 +55,15 @@ class File4BaseStatusSidebar extends StatefulWidget {
   final int currentLayoutIndex;
   final ValueChanged<int>? onLayoutChanged;
 
+  /// Layout mode tool palette. The palette shows [selectedTool] and reports
+  /// picks through [onToolSelected], so it stays in sync with the designer.
+  final LayoutTool selectedTool;
+  final ValueChanged<LayoutTool>? onToolSelected;
+
+  /// Line width applied to the selected object (and to new drawings).
+  final double strokeWidth;
+  final ValueChanged<double>? onStrokeWidthChanged;
+
   const File4BaseStatusSidebar({
     super.key,
     this.layouts = const [],
@@ -82,6 +92,10 @@ class File4BaseStatusSidebar extends StatefulWidget {
     this.layoutCount = 1,
     this.currentLayoutIndex = 0,
     this.onLayoutChanged,
+    this.selectedTool = LayoutTool.pointer,
+    this.onToolSelected,
+    this.strokeWidth = 1.0,
+    this.onStrokeWidthChanged,
   });
 
   @override
@@ -89,8 +103,8 @@ class File4BaseStatusSidebar extends StatefulWidget {
 }
 
 class _File4BaseStatusSidebarState extends State<File4BaseStatusSidebar> {
-  LayoutTool _selectedTool = LayoutTool.pointer;
-  double _strokeWidth = 1.0;
+  LayoutTool get _selectedTool => widget.selectedTool;
+  double get _strokeWidth => widget.strokeWidth.clamp(0.5, 6.0);
 
   @override
   Widget build(BuildContext context) {
@@ -578,9 +592,9 @@ class _File4BaseStatusSidebarState extends State<File4BaseStatusSidebar> {
                     icon: Icons.format_color_fill,
                     label: 'Format'),
                 _ToolDef(
-                    tool: LayoutTool.rotate,
-                    icon: Icons.rotate_right,
-                    label: 'Rotate'),
+                    tool: LayoutTool.tabOrder,
+                    icon: Icons.keyboard_tab,
+                    label: 'Set Tab Order'),
               ], isDark),
             ],
           ),
@@ -623,7 +637,7 @@ class _File4BaseStatusSidebarState extends State<File4BaseStatusSidebar> {
           child: Tooltip(
             message: def.label,
             child: GestureDetector(
-              onTap: () => setState(() => _selectedTool = def.tool),
+              onTap: () => widget.onToolSelected?.call(def.tool),
               child: Container(
                 height: 28,
                 margin: const EdgeInsets.all(1),
@@ -708,11 +722,11 @@ class _File4BaseStatusSidebarState extends State<File4BaseStatusSidebar> {
                     value: _strokeWidth,
                     min: 0.5,
                     max: 6.0,
-                    onChanged: (v) => setState(() => _strokeWidth = v),
+                    onChanged: widget.onStrokeWidthChanged,
                   ),
                 ),
               ),
-              Text('${_strokeWidth.toStringAsFixed(0)} pt',
+              Text('${_strokeWidth.toStringAsFixed(1)} pt',
                   style: TextStyle(fontSize: 9, color: labelColor)),
             ],
           ),

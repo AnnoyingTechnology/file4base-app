@@ -45,6 +45,11 @@ File4Base enforces the exact 4-mode operational paradigm:
    - Layout Parts manager: Top Navigation, Title Header, Header, Body, Subsummary (with break field), Trailing Grand Summary, Footer, Bottom Navigation.
    - Field Picker dialog for dragging fields onto the canvas.
    - Floating/Dockable Inspector: Position, Styles (fill, stroke, corner radius, padding, shadows), Typography, and Data Binding (control style, value lists, behavior).
+   - Drawing tools: Line, Rectangle, Rounded Rectangle and Oval are drawn by dragging on the canvas (or placed with a click). Lines are horizontal or vertical, following the longer side of the drag. Line color and width (status sidebar stroke control or inspector) apply to lines and to the border of shapes.
+   - Text: labels, buttons and shapes hold text, edited in place with a double click (or Enter) or in the inspector. Insert > Current Date / Current Time / Current User Name / Page Number / Merge Field add merge symbols (`{{CurrentDate}}`, `{{field_name}}`, ...) resolved in Browse and Preview modes.
+   - Insert > Picture / PDF / Audio-Video / File embeds the file (up to 2 MB, stored in the layout) inside the selected shape, or in a new media object.
+   - Button setup (Data tab): a button runs a single step (New/Duplicate/Delete/Commit/Revert Record, Go to Record, Enter Find Mode, Perform Find, Show All Records, Enter Preview Mode, Go to Layout, Set Field, Show Custom Dialog, Open URL) or performs a stored script with an optional parameter.
+   - Set Tab Order tool: click fields and buttons in the order the Tab key visits them in Browse and Find modes; "Auto" numbers them in reading order, "Clear" removes the order.
 
 4. **Preview Mode (`Ctrl+U` / `Cmd+U`)**:
    - Printable page simulation with exact margins, pagination breaks, and multi-column printing flow.

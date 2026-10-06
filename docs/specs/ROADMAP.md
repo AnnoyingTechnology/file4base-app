@@ -53,6 +53,8 @@
 - [x] Build Flutter Layout Renderer & Designer:
   - [x] Field inputs (Text, Number, Date, Dropdown/Value Lists, Checkbox).
   - [x] Portals (sub-table for 1:N related records).
+  - [x] Drawn objects (line, rectangle, rounded rectangle, oval) with fill and line color/width, text inside shapes and embedded pictures/files (Insert menu).
+  - [x] Button actions (single step or Perform Script) and Set Tab Order for Browse/Find keyboard navigation.
   - [x] Parts (Top Navigation, Header, Body, Footer).
   - [x] Layout backend REST persistence (`/api/v1/schemas/layouts`).
   - [x] Official branding integration across macOS, Windows, Linux, and WebDirect.
@@ -84,3 +86,4 @@
 - [ ] Implement drag-and-drop step reordering and visual conditional indentation (`If/Else/End If`, `Loop/End Loop`).
 - [ ] Embed formula calculation engine in Go (arithmetic, string concatenation, logical tests, date math via Google CEL).
 - [ ] Script step runner executing actions deterministically with step-by-step debugging.
+  - [x] Client-side runner for layout buttons: single step actions and Perform Script for record, navigation, Set Field, dialog and URL steps. Control flow (`If`, `Loop`), variables and integration steps stop the script with a message until the calculation engine and server runner exist.
