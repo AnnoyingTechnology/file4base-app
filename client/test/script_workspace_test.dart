@@ -240,4 +240,90 @@ void main() {
       expect(find.text('INTEGRATION & DATA'), findsOneWidget);
     });
   });
+
+  group('ScriptWorkspaceDialog saving', () {
+    /// Simulates the server: PUT only accepts ids it assigned (400 otherwise,
+    /// like local ids such as "script-123"), POST assigns a new id.
+    MockClient fakeServer(Map<String, Map<String, dynamic>> stored, List<String> posted) {
+      return MockClient((request) async {
+        final path = request.url.path;
+        if (path == '/api/v1/schemas/scripts' && request.method == 'GET') {
+          return http.Response(jsonEncode(stored.values.toList()), 200);
+        }
+        if (path == '/api/v1/schemas/scripts' && request.method == 'POST') {
+          final body = jsonDecode(request.body) as Map<String, dynamic>;
+          final id = 'srv-${stored.length + 1}';
+          stored[id] = {...body, 'id': id};
+          posted.add(body['name'] as String);
+          return http.Response(jsonEncode(stored[id]), 201);
+        }
+        if (path.startsWith('/api/v1/schemas/scripts/') && request.method == 'PUT') {
+          final id = path.split('/').last;
+          if (!stored.containsKey(id)) return http.Response('{"title":"Script Error"}', 400);
+          stored[id] = jsonDecode(request.body) as Map<String, dynamic>;
+          return http.Response(jsonEncode(stored[id]), 200);
+        }
+        return http.Response('[]', 200);
+      });
+    }
+
+    Future<void> openWorkspace(WidgetTester tester, ApiClient api) async {
+      tester.view.physicalSize = const Size(1400, 900);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(() => tester.view.resetPhysicalSize());
+      await tester.pumpWidget(ProviderScope(
+        child: MaterialApp(
+          home: Builder(
+            builder: (context) => Scaffold(
+              body: Center(
+                child: TextButton(
+                  onPressed: () => ScriptWorkspaceDialog.show(context, api),
+                  child: const Text('open'),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ));
+      await tester.tap(find.text('open'));
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('saving twice does not create duplicate scripts on the server', (tester) async {
+      final stored = <String, Map<String, dynamic>>{};
+      final posted = <String>[];
+      await openWorkspace(tester, ApiClient(baseUrl: 'http://localhost', httpClient: fakeServer(stored, posted)));
+
+      await tester.tap(find.text('Guión').first); // new script
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Guardar'));
+      await tester.pumpAndSettle();
+      final createdFirstSave = posted.length;
+      expect(createdFirstSave, greaterThan(0));
+
+      await tester.tap(find.text('Guión').first); // one more script
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Guardar'));
+      await tester.pumpAndSettle();
+      expect(posted.length, createdFirstSave + 1, reason: 'only the new script is created on the second save');
+      expect(stored.length, posted.length);
+    });
+
+    testWidgets('closing with unsaved scripts asks to save them', (tester) async {
+      final stored = <String, Map<String, dynamic>>{};
+      final posted = <String>[];
+      await openWorkspace(tester, ApiClient(baseUrl: 'http://localhost', httpClient: fakeServer(stored, posted)));
+
+      await tester.tap(find.text('Guión').first);
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('Cerrar ventana'));
+      await tester.pumpAndSettle();
+      expect(find.text('Unsaved scripts'), findsOneWidget);
+
+      await tester.tap(find.text('Save'));
+      await tester.pumpAndSettle();
+      expect(posted, isNotEmpty);
+      expect(find.byType(ScriptWorkspaceDialog), findsNothing);
+    });
+  });
 }

@@ -2,6 +2,52 @@ import '../../core/api/api_client.dart';
 import '../../core/models/script_models.dart';
 import 'models/layout_definition.dart';
 
+/// Steps a button can run directly (single step action), with their labels.
+/// Parameters use the same names as the Script Workspace steps.
+const kButtonActionSteps = <String, String>{
+  'new_record': 'New Record',
+  'duplicate_record': 'Duplicate Record',
+  'delete_record': 'Delete Record',
+  'commit_records': 'Commit (Save) Record',
+  'revert_record': 'Revert Record',
+  'go_to_record': 'Go to Record',
+  'enter_find_mode': 'Enter Find Mode',
+  'perform_find': 'Perform Find',
+  'show_all_records': 'Show All Records',
+  'enter_preview_mode': 'Enter Preview Mode',
+  'go_to_layout': 'Go to Layout',
+  'set_field': 'Set Field',
+  'show_dialog': 'Show Custom Dialog',
+  'open_url': 'Open URL',
+};
+
+/// Default parameters of a single step action when it is chosen.
+Map<String, dynamic> defaultButtonStepParams(String stepType) => switch (stepType) {
+      'go_to_record' => {'target': 'next'},
+      'show_dialog' => {'title': 'Message', 'message': ''},
+      'set_field' => {'field': '', 'value': ''},
+      'go_to_layout' => {'layout_name': ''},
+      'open_url' => {'url': 'https://'},
+      _ => <String, dynamic>{},
+    };
+
+/// One-line description of a button action, e.g. "Perform Script: Archive".
+String describeButtonAction(ButtonActionModel a) {
+  if (a.isPerformScript) {
+    final p = a.parameter?.isNotEmpty == true ? ' ("${a.parameter}")' : '';
+    return 'Perform Script: ${a.scriptName ?? a.scriptId ?? '(no script selected)'}$p';
+  }
+  final label = kButtonActionSteps[a.stepType] ?? a.stepType ?? '?';
+  final detail = switch (a.stepType) {
+    'go_to_record' => ' [${a.params['target'] ?? 'next'}]',
+    'go_to_layout' => ' [${a.params['layout_name'] ?? ''}]',
+    'set_field' => ' [${a.params['field'] ?? ''}]',
+    'open_url' => ' [${a.params['url'] ?? ''}]',
+    _ => '',
+  };
+  return '$label$detail';
+}
+
 /// Operations a layout button can trigger in Browse mode. Implemented by the
 /// data browser, which owns the current record and the found set.
 abstract class LayoutActionHost {

@@ -278,6 +278,89 @@ void main() {
   });
 
   group('Button actions', () {
+    Future<GlobalKey<LayoutDesignerWidgetState>> pumpButtonLayout(
+        WidgetTester tester, _MutableScriptsApi api, void Function(LayoutDefinitionModel) onChanged) async {
+      tester.view.physicalSize = const Size(1600, 1000);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      final key = GlobalKey<LayoutDesignerWidgetState>();
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: LayoutDesignerWidget(
+            key: key,
+            table: _table,
+            apiClient: api,
+            initialLayout: const LayoutDefinitionModel(id: 'l1', name: 'L', tableOccurrence: 'contacts', objects: [
+              LayoutObjectModel(id: 'b', type: 'button', x: 100, y: 100, width: 120, height: 34, text: 'Nuevo'),
+            ]),
+            onSaved: () {},
+            onLayoutChanged: onChanged,
+            // The Script Workspace creates a script while it is open.
+            onManageScripts: () async => api.scripts.add(const ScriptModel(id: 'srv-1', name: 'Nuevo registro')),
+          ),
+        ),
+      ));
+      await tester.pumpAndSettle();
+      return key;
+    }
+
+    Future<void> openButtonSetup(WidgetTester tester) async {
+      final center = tester.getCenter(find.text('Nuevo'));
+      await tester.tapAt(center);
+      await tester.pump(const Duration(milliseconds: 50));
+      await tester.tapAt(center);
+      await tester.pumpAndSettle();
+      expect(find.text('Button Setup'), findsOneWidget);
+    }
+
+    testWidgets('double click on a button opens Button Setup and assigns a Script Workspace script', (tester) async {
+      final api = _MutableScriptsApi();
+      LayoutDefinitionModel? last;
+      await pumpButtonLayout(tester, api, (l) => last = l);
+      expect(find.text('No action (double click to set up)'), findsOneWidget);
+
+      await openButtonSetup(tester);
+      await tester.tap(find.text('Perform a script'));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('There are no scripts yet'), findsOneWidget);
+
+      // Scripts created meanwhile in the Script Workspace show up when it closes.
+      await tester.tap(find.text('Edit scripts...'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(InputDecorator, 'Script'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Nuevo registro  (0 steps)').last);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('OK'));
+      await tester.pumpAndSettle();
+
+      final action = last!.objects.single.action!;
+      expect(action.isPerformScript, isTrue);
+      expect(action.scriptId, 'srv-1');
+      expect(find.text('Perform Script: Nuevo registro'), findsWidgets);
+      await _settleAutoSave(tester);
+    });
+
+    testWidgets('"New script" in Button Setup creates the script and assigns it', (tester) async {
+      final api = _MutableScriptsApi();
+      LayoutDefinitionModel? last;
+      await pumpButtonLayout(tester, api, (l) => last = l);
+      await openButtonSetup(tester);
+      await tester.tap(find.text('Perform a script'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('New script...'));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.widgetWithText(TextField, 'Script name'), 'Alta de cliente');
+      await tester.tap(find.text('Create'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('OK'));
+      await tester.pumpAndSettle();
+      final action = last!.objects.single.action!;
+      expect(action.scriptName, 'Alta de cliente');
+      expect(api.scripts.map((s) => s.name), contains('Alta de cliente'));
+      await _settleAutoSave(tester);
+    });
+
     test('a single step action runs on the host', () async {
       final host = _FakeHost();
       final runner = LayoutActionRunner(apiClient: ApiClient(baseUrl: 'http://localhost:1'), host: host);
@@ -314,6 +397,21 @@ class _FakeScriptsApi extends ApiClient {
 
   @override
   Future<List<ScriptModel>> listScripts({String? database}) async => [script];
+}
+
+class _MutableScriptsApi extends ApiClient {
+  final scripts = <ScriptModel>[];
+  _MutableScriptsApi() : super(baseUrl: 'http://localhost:1');
+
+  @override
+  Future<List<ScriptModel>> listScripts({String? database}) async => List.of(scripts);
+
+  @override
+  Future<ScriptModel> createScript(Map<String, dynamic> data, {String? database}) async {
+    final created = ScriptModel(id: 'created-${scripts.length + 1}', name: data['name'] as String);
+    scripts.add(created);
+    return created;
+  }
 }
 
 class _FakeHost implements LayoutActionHost {

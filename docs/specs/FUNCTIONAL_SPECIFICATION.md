@@ -30,6 +30,9 @@ File4Base enforces the exact 4-mode operational paradigm:
 1. **Browse Mode (`Ctrl+B` / `Cmd+B`)**:
    - Primary data interaction mode (Form, List, and Table views).
    - Real-time record navigation slider, record counter, found-set indicator.
+   - Record bar above the layout: first / previous / next / last, an editable "Record N of M" box, a slider (the record changes on release), the found set summary ("48 found of 230 · Sorted by City ↑") and the save status. `Cmd/Ctrl+↑/↓` moves to the previous / next record.
+   - Record actions: New, Duplicate, Delete (with confirmation), Find, Sort (by one field, ascending or descending, or unsorted) and Show All; the Records menu offers the same.
+   - Views: Form (the layout), List (one row per record) and Table (spreadsheet grid; click a header to sort, double click a row to open it in Form view).
    - Field data entry with instant auto-commit or deferred layout commit (`Enter`).
    - Portal interaction: adding/editing rows directly in 1:N related grids.
 
@@ -48,7 +51,7 @@ File4Base enforces the exact 4-mode operational paradigm:
    - Drawing tools: Line, Rectangle, Rounded Rectangle and Oval are drawn by dragging on the canvas (or placed with a click). Lines are horizontal or vertical, following the longer side of the drag. Line color and width (status sidebar stroke control or inspector) apply to lines and to the border of shapes.
    - Text: labels, buttons and shapes hold text, edited in place with a double click (or Enter) or in the inspector. Insert > Current Date / Current Time / Current User Name / Page Number / Merge Field add merge symbols (`{{CurrentDate}}`, `{{field_name}}`, ...) resolved in Browse and Preview modes.
    - Insert > Picture / PDF / Audio-Video / File embeds the file (up to 2 MB, stored in the layout) inside the selected shape, or in a new media object.
-   - Button setup (Data tab): a button runs a single step (New/Duplicate/Delete/Commit/Revert Record, Go to Record, Enter Find Mode, Perform Find, Show All Records, Enter Preview Mode, Go to Layout, Set Field, Show Custom Dialog, Open URL) or performs a stored script with an optional parameter.
+   - Button Setup (double click a button, press Enter, right click > Button Setup..., or the inspector Data tab): the button label and its click action. Under each button the canvas shows the action it runs. "New script..." creates a script, assigns it and opens the Script Workspace to add its steps. A button runs a single step (New/Duplicate/Delete/Commit/Revert Record, Go to Record, Enter Find Mode, Perform Find, Show All Records, Enter Preview Mode, Go to Layout, Set Field, Show Custom Dialog, Open URL) or performs a stored script with an optional parameter.
    - Set Tab Order tool: click fields and buttons in the order the Tab key visits them in Browse and Find modes; "Auto" numbers them in reading order, "Clear" removes the order.
 
 4. **Preview Mode (`Ctrl+U` / `Cmd+U`)**:

@@ -4,6 +4,8 @@
 FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS builder
 ARG TARGETOS=linux
 ARG TARGETARCH
+# "v7" for linux/arm/v7 (32-bit Raspberry Pi OS); empty on amd64/arm64
+ARG TARGETVARIANT
 
 WORKDIR /app
 
@@ -18,7 +20,7 @@ RUN go mod download
 # Copy source code and build
 COPY . .
 ENV GOTOOLCHAIN=auto
-RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags="-w -s" -o /app/server ./cmd/server
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} GOARM=${TARGETVARIANT#v} go build -ldflags="-w -s" -o /app/server ./cmd/server
 
 # Minimal production image
 FROM alpine:3.20

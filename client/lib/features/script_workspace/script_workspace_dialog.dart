@@ -477,12 +477,17 @@ class _ScriptWorkspaceDialogState extends ConsumerState<ScriptWorkspaceDialog> {
     }
   }
 
-  Future<void> _saveAllChanges() async {
+  /// Saves every script. Scripts that only exist locally (new scripts and the
+  /// demo scripts, whose ids are not server ids) are created on the server and
+  /// then take the id the server assigned, so the next save updates them
+  /// instead of creating duplicates. Returns false when a script failed.
+  Future<bool> _saveAllChanges() async {
     setState(() => _isLoading = true);
     final db = widget.databaseName;
+    final failed = <String>[];
 
     try {
-      for (final script in _scripts) {
+      for (final script in List<ScriptModel>.from(_scripts)) {
         final payload = {
           'id': script.id,
           'name': script.name,
@@ -495,17 +500,33 @@ class _ScriptWorkspaceDialogState extends ConsumerState<ScriptWorkspaceDialog> {
         try {
           await widget.apiClient.updateScript(script.id, payload, database: db);
         } catch (_) {
-          // If script doesn't exist on server, create it
+          // The script does not exist on the server yet: create it and adopt
+          // the server id.
           try {
-            await widget.apiClient.createScript(payload, database: db);
-          } catch (_) {}
+            final created = await widget.apiClient.createScript(payload, database: db);
+            _replaceScriptId(script.id, created.id);
+          } catch (_) {
+            failed.add(script.name);
+          }
         }
       }
 
       setState(() {
-        _hasUnsavedChanges = false;
+        _hasUnsavedChanges = failed.isNotEmpty;
         _isLoading = false;
       });
+
+      if (failed.isNotEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Could not save: ${failed.join(', ')}'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+        return false;
+      }
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -526,7 +547,43 @@ class _ScriptWorkspaceDialogState extends ConsumerState<ScriptWorkspaceDialog> {
           ),
         );
       }
+      return false;
     }
+    return true;
+  }
+
+  void _replaceScriptId(String oldId, String newId) {
+    if (oldId == newId) return;
+    _scripts = _scripts
+        .map((sc) => sc.id == oldId
+            ? sc.copyWith(id: newId, steps: sc.steps.map((st) => st.copyWith(scriptId: newId)).toList())
+            : sc)
+        .toList();
+    final openIdx = _openScriptIds.indexOf(oldId);
+    if (openIdx >= 0) _openScriptIds[openIdx] = newId;
+    if (_activeScriptId == oldId) _activeScriptId = newId;
+  }
+
+  /// Closing with unsaved changes asks whether to save them first, so new
+  /// scripts are not lost (they would not be available to layout buttons).
+  Future<void> _close() async {
+    if (_hasUnsavedChanges) {
+      final choice = await showDialog<String>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Unsaved scripts'),
+          content: const Text('Save the changes to your scripts before closing?'),
+          actions: [
+            TextButton(onPressed: () => Navigator.of(ctx).pop('cancel'), child: const Text('Cancel')),
+            TextButton(onPressed: () => Navigator.of(ctx).pop('discard'), child: const Text("Don't save")),
+            FilledButton(onPressed: () => Navigator.of(ctx).pop('save'), child: const Text('Save')),
+          ],
+        ),
+      );
+      if (choice == null || choice == 'cancel') return;
+      if (choice == 'save' && !await _saveAllChanges()) return;
+    }
+    if (mounted) Navigator.of(context).pop();
   }
 
   void _runActiveScript() {

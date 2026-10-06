@@ -12,6 +12,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Use English throughout the client interface, including security, scripts, relationships, themes, file options, page setup, and help dialogs.
 - Set English as the default client locale regardless of the host language, including standard Material controls.
+## [0.7.0] - 2026-10-06
+
+### Added
+- Button Setup window in Layout mode, opened with a double click on a button, Enter, right click > Button Setup... or the inspector: set the label and choose what a click runs in Browse mode (nothing, a single step or a script). "New script..." creates a script, assigns it and opens the Script Workspace; "Edit scripts..." reloads the list when the workspace closes.
+- Layout mode canvas shows under each button the action it runs ("Perform Script: New contact"), and objects have a context menu (Button Setup, Edit text, Duplicate, Bring to front, Send to back, Delete).
+- Browse mode record bar: first, previous, next and last record, an editable "Record N of M" box, a slider, the found set summary ("N found of M · Sorted by ...") and the save status.
+- Browse mode actions: New, Duplicate, Delete (with confirmation), Find, Sort and Show All; Records > Sort Records... opens the same sort dialog.
+- Browse mode List and Table views (Table: click a header to sort, double click a row to open it in Form view).
+- `Cmd/Ctrl+↑` / `Cmd/Ctrl+↓` move to the previous / next record in Browse mode.
+- Docker images are also published for `linux/arm/v7` (Raspberry Pi with a 32-bit OS), besides `linux/amd64` and `linux/arm64`.
+
+### Changed
+- The status sidebar no longer shows the notebook, record counter and slider in Browse mode (they moved to the record bar), and the duplicate record header above the form was removed.
+- The inspector Data tab of a button shows a summary of its action and a Button Setup... button instead of inline action fields.
+
+### Fixed
+- Records > Duplicate Record created an empty record instead of duplicating the current one.
+- Dragging the record slider could save field edits into the wrong record.
+
+## [0.6.1] - 2026-10-06
+
+### Fixed
+- Scripts created in the Script Workspace did not appear in the button "Perform Script" list: the layout designer loaded the list once and never refreshed it. It now reloads when a button is selected and when the Script Workspace is closed (from the inspector, the Manage menu or the Scripts menu), and shows load errors instead of "No scripts yet".
+- Script Workspace: saving created a new copy of every new script on each save, because scripts kept their local id after the server assigned another one. Created scripts now adopt the server id.
+- Script Workspace: closing the window with unsaved scripts discarded them silently; it now asks to save, discard or cancel.
+
 ## [0.6.0] - 2026-10-06
 
 ### Added

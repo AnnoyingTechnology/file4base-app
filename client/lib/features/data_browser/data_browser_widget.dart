@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:math' as math;
+import 'package:flutter/foundation.dart' show defaultTargetPlatform;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../core/api/api_client.dart';
 import '../../main.dart';
@@ -48,7 +50,16 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
   int _currentIndex = 0;
   bool _isFoundSet = false;
   String? _lastFocusedFindField;
-  String _viewMode = 'form'; // 'form' (visual layout) or 'card' (standard list)
+  String _viewMode = 'form'; // 'form' (layout), 'list' (record list) or 'table' (spreadsheet grid)
+
+  // Found set bookkeeping for the record bar
+  int _totalInTable = 0;
+  List<Map<String, dynamic>> _unsortedRecords = [];
+  String? _sortField;
+  bool _sortAscending = true;
+  final TextEditingController _recordNumberCtrl = TextEditingController();
+  final FocusNode _recordNumberFocus = FocusNode();
+  double? _sliderDragValue; // record shown by the slider while it is dragged
 
   int get currentIndex => _currentIndex;
   int get totalRecords => _records.length;
@@ -56,6 +67,8 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
   bool get isFoundSet => _isFoundSet;
 
   void createNewRecord() => _createNewRecord();
+  void duplicateRecord() => actionDuplicateRecord();
+  void sortRecords() => _showSortDialog();
   void deleteCurrentRecord() => _deleteCurrentRecord();
   void performFind() => _performFind();
   void fetchRecords() => _fetchRecords();
@@ -199,6 +212,25 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
     super.initState();
     _initFindControllers();
     _fetchRecords();
+    HardwareKeyboard.instance.addHandler(_handleRecordShortcut);
+  }
+
+  /// Cmd/Ctrl + Up / Down moves to the previous / next record in Browse
+  /// mode, also while a field is being edited.
+  bool _handleRecordShortcut(KeyEvent event) {
+    if (event is! KeyDownEvent || widget.mode != OperationalMode.browse || !mounted) return false;
+    final kb = HardwareKeyboard.instance;
+    if (!(kb.isMetaPressed || kb.isControlPressed) || kb.isShiftPressed || kb.isAltPressed) return false;
+    if (ModalRoute.of(context)?.isCurrent == false) return false; // a dialog is open
+    if (event.logicalKey == LogicalKeyboardKey.arrowUp) {
+      previousRecord();
+      return true;
+    }
+    if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
+      nextRecord();
+      return true;
+    }
+    return false;
   }
 
   @override
@@ -238,6 +270,9 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
 
   @override
   void dispose() {
+    HardwareKeyboard.instance.removeHandler(_handleRecordShortcut);
+    _recordNumberCtrl.dispose();
+    _recordNumberFocus.dispose();
     for (var c in _findControllers.values) {
       c.dispose();
     }
@@ -258,7 +293,14 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
     try {
       final rows = await widget.apiClient.listRows(widget.table.name);
       if (mounted) {
-        setState(() { _records = rows; _currentIndex = 0; _isLoading = false; });
+        setState(() {
+          _records = rows;
+          _unsortedRecords = List.of(rows);
+          _totalInTable = rows.length;
+          _sortField = null;
+          _currentIndex = 0;
+          _isLoading = false;
+        });
         _rebuildFieldControllers();
         widget.onRecordChanged?.call(_currentIndex, _records.length);
       }
@@ -404,6 +446,8 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
       } else {
         setState(() {
           _records = results;
+          _unsortedRecords = List.of(results);
+          _sortField = null;
           _currentIndex = 0;
           _isFoundSet = true;
           _isLoading = false;
@@ -448,6 +492,10 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
       content = _buildFindModeForm();
     } else if (hasCustomLayoutForm) {
       content = _buildLayoutCanvasView(widget.layout!, isFindMode: false);
+    } else if (_viewMode == 'table' && _records.isNotEmpty) {
+      content = _buildTableView();
+    } else if (_viewMode == 'list' && _records.isNotEmpty) {
+      content = _buildListView();
     } else if (_error != null) {
       content = Center(
         child: Column(
@@ -494,145 +542,13 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
   }
 
   Widget _buildRecordToolbar() {
+    if (widget.mode == OperationalMode.browse) return _buildBrowseRecordBar();
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 6.0),
       color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
       child: Row(
         children: [
-          if (widget.mode == OperationalMode.browse) ...[
-            IconButton(
-              icon: const Icon(Icons.first_page),
-              tooltip: 'First Record',
-              onPressed: _records.isNotEmpty && _currentIndex > 0
-                  ? () => _saveCurrentRecord().then((_) {
-                        if (!mounted) return;
-                        setState(() => _currentIndex = 0);
-                        _rebuildFieldControllers();
-                        widget.onRecordChanged?.call(_currentIndex, _records.length);
-                      })
-                  : null,
-            ),
-            IconButton(
-              icon: const Icon(Icons.navigate_before),
-              tooltip: 'Previous Record',
-              onPressed: _records.isNotEmpty && _currentIndex > 0 ? previousRecord : null,
-            ),
-            Text(
-              _records.isNotEmpty ? '${_currentIndex + 1} of ${_records.length}' : '0 of 0',
-              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
-            ),
-            IconButton(
-              icon: const Icon(Icons.navigate_next),
-              tooltip: 'Next Record',
-              onPressed: _records.isNotEmpty && _currentIndex < _records.length - 1 ? nextRecord : null,
-            ),
-            IconButton(
-              icon: const Icon(Icons.last_page),
-              tooltip: 'Last Record',
-              onPressed: _records.isNotEmpty && _currentIndex < _records.length - 1
-                  ? () => _saveCurrentRecord().then((_) {
-                        if (!mounted) return;
-                        setState(() => _currentIndex = _records.length - 1);
-                        _rebuildFieldControllers();
-                        widget.onRecordChanged?.call(_currentIndex, _records.length);
-                      })
-                  : null,
-            ),
-            const SizedBox(width: 16),
-            FilledButton.icon(
-              icon: const Icon(Icons.add, size: 16),
-              label: const Text('New Record'),
-              onPressed: _createNewRecord,
-            ),
-            const SizedBox(width: 8),
-            OutlinedButton.icon(
-              icon: const Icon(Icons.delete_outline, size: 16),
-              label: const Text('Delete'),
-              onPressed: _records.isNotEmpty ? _deleteCurrentRecord : null,
-            ),
-            const SizedBox(width: 8),
-            IconButton(
-              icon: const Icon(Icons.refresh),
-              tooltip: 'Show All Records',
-              onPressed: _fetchRecords,
-            ),
-            if (_isFoundSet) ...[
-              const SizedBox(width: 10),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF1E88E5).withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: const Color(0xFF1E88E5).withValues(alpha: 0.3)),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Icon(Icons.filter_alt, size: 14, color: Color(0xFF1E88E5)),
-                    const SizedBox(width: 4),
-                    Text(
-                      'Found: ${_records.length}',
-                      style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFF1E88E5)),
-                    ),
-                    const SizedBox(width: 6),
-                    InkWell(
-                      onTap: _fetchRecords,
-                      borderRadius: BorderRadius.circular(10),
-                      child: const Tooltip(
-                        message: 'Clear filter and show all records',
-                        child: Icon(Icons.close, size: 14, color: Color(0xFF1E88E5)),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-            const Spacer(),
-            if (widget.layout != null) ...[
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF1E88E5).withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(4),
-                  border: Border.all(color: const Color(0xFF1E88E5).withValues(alpha: 0.3)),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Icon(Icons.view_quilt, size: 14, color: Color(0xFF1E88E5)),
-                    const SizedBox(width: 4),
-                    Text(
-                      widget.layout!.name,
-                      style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Color(0xFF1E88E5)),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 8),
-              SegmentedButton<String>(
-                segments: const [
-                  ButtonSegment(
-                    value: 'form',
-                    icon: Icon(Icons.dashboard_outlined, size: 14),
-                    label: Text('Form', style: TextStyle(fontSize: 11)),
-                  ),
-                  ButtonSegment(
-                    value: 'card',
-                    icon: Icon(Icons.view_agenda_outlined, size: 14),
-                    label: Text('Cards', style: TextStyle(fontSize: 11)),
-                  ),
-                ],
-                selected: {_viewMode},
-                onSelectionChanged: (val) {
-                  setState(() => _viewMode = val.first);
-                },
-                style: SegmentedButton.styleFrom(
-                  visualDensity: VisualDensity.compact,
-                  padding: const EdgeInsets.symmetric(horizontal: 6),
-                ),
-              ),
-            ],
-          ] else if (widget.mode == OperationalMode.find) ...[
+          if (widget.mode == OperationalMode.find) ...[
             FilledButton.icon(
               icon: const Icon(Icons.search, size: 18),
               label: const Text('Perform Find (Enter)'),
@@ -665,6 +581,371 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
             ),
           ],
         ],
+      ),
+    );
+  }
+
+  // ─── Browse mode record bar ────────────────────────────────────────────────
+
+  static final bool _isApplePlatform =
+      defaultTargetPlatform == TargetPlatform.macOS || defaultTargetPlatform == TargetPlatform.iOS;
+  static String get _modKey => _isApplePlatform ? '⌘' : 'Ctrl+';
+
+  /// Saving state of the current record, from the per-field save status.
+  ({IconData icon, Color color, String label}) get _saveStatus {
+    if (_fieldSaving.values.any((v) => v == false)) {
+      return (icon: Icons.error_outline, color: Colors.red, label: 'Not saved');
+    }
+    if (_fieldSaving.values.any((v) => v == true)) {
+      return (icon: Icons.sync, color: Colors.blue, label: 'Saving...');
+    }
+    return (icon: Icons.check_circle_outline, color: Colors.green.shade700, label: 'Saved');
+  }
+
+  String get _foundSetSummary {
+    final n = _records.length;
+    final sort = _sortField == null ? 'Unsorted' : 'Sorted by ${_displayName(_sortField!)} ${_sortAscending ? '↑' : '↓'}';
+    if (_isFoundSet) return '$n found of $_totalInTable · $sort';
+    return '$n ${n == 1 ? 'record' : 'records'} · $sort';
+  }
+
+  void _goToRecordIndex(int index) {
+    if (_records.isEmpty) return;
+    goToRecord(index.clamp(0, _records.length - 1));
+  }
+
+  Widget _buildBrowseRecordBar() {
+    final theme = Theme.of(context);
+    final hasRecords = _records.isNotEmpty;
+    final atFirst = !hasRecords || _currentIndex == 0;
+    final atLast = !hasRecords || _currentIndex >= _records.length - 1;
+    final current = hasRecords ? _currentIndex + 1 : 0;
+    if (!_recordNumberFocus.hasFocus && _recordNumberCtrl.text != '$current') {
+      _recordNumberCtrl.text = '$current';
+    }
+    final status = _saveStatus;
+
+    Widget navButton(IconData icon, String tip, VoidCallback? onPressed) => IconButton(
+          icon: Icon(icon, size: 20),
+          tooltip: tip,
+          visualDensity: VisualDensity.compact,
+          onPressed: onPressed,
+        );
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 6, 12, 6),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surface,
+        border: Border(bottom: BorderSide(color: theme.dividerColor.withValues(alpha: 0.4))),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // Row 1: position in the found set
+          Row(
+            children: [
+              navButton(Icons.first_page, 'First record', atFirst ? null : () => _goToRecordIndex(0)),
+              navButton(Icons.chevron_left, 'Previous record (${_modKey}↑)', atFirst ? null : previousRecord),
+              const Text('Record ', style: TextStyle(fontSize: 13)),
+              _RecordNumberField(
+                controller: _recordNumberCtrl,
+                focusNode: _recordNumberFocus,
+                enabled: hasRecords,
+                onSubmitted: (v) {
+                  final n = int.tryParse(v.trim());
+                  if (n != null) _goToRecordIndex(n - 1);
+                },
+              ),
+              Text(' of ${_records.length}', style: const TextStyle(fontSize: 13)),
+              navButton(Icons.chevron_right, 'Next record (${_modKey}↓)', atLast ? null : nextRecord),
+              navButton(Icons.last_page, 'Last record', atLast ? null : () => _goToRecordIndex(_records.length - 1)),
+              if (_records.length > 1)
+                SizedBox(
+                  width: 140,
+                  // Dragging only previews the number; the record changes on release,
+                  // after the current record is saved.
+                  child: Slider(
+                    value: (_sliderDragValue ?? _currentIndex.toDouble()).clamp(0, (_records.length - 1).toDouble()),
+                    min: 0,
+                    max: (_records.length - 1).toDouble(),
+                    divisions: _records.length - 1,
+                    label: '${(_sliderDragValue ?? _currentIndex.toDouble()).round() + 1}',
+                    onChanged: (v) => setState(() => _sliderDragValue = v),
+                    onChangeEnd: (v) {
+                      setState(() => _sliderDragValue = null);
+                      _goToRecordIndex(v.round());
+                    },
+                  ),
+                ),
+              const SizedBox(width: 8),
+              Flexible(
+                child: Text(
+                  _foundSetSummary,
+                  style: TextStyle(fontSize: 12, color: theme.colorScheme.onSurfaceVariant),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              if (_isFoundSet)
+                Tooltip(
+                  message: 'Show all records',
+                  child: IconButton(
+                    icon: const Icon(Icons.filter_alt_off_outlined, size: 18),
+                    visualDensity: VisualDensity.compact,
+                    onPressed: _fetchRecords,
+                  ),
+                ),
+              const Spacer(),
+              if (hasRecords)
+                Tooltip(
+                  message: 'Changes are saved automatically',
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(status.icon, size: 15, color: status.color),
+                      const SizedBox(width: 4),
+                      Text(status.label, style: TextStyle(fontSize: 12, color: status.color)),
+                    ],
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          // Row 2: record actions and view
+          Row(
+            children: [
+              FilledButton.icon(
+                icon: const Icon(Icons.add, size: 16),
+                label: const Text('New'),
+                style: FilledButton.styleFrom(visualDensity: VisualDensity.compact),
+                onPressed: _createNewRecord,
+              ),
+              const SizedBox(width: 6),
+              _barButton(Icons.copy, 'Duplicate', hasRecords ? actionDuplicateRecord : null),
+              _barButton(Icons.delete_outline, 'Delete',
+                  hasRecords ? () => actionDeleteRecord(confirm: true) : null,
+                  color: Colors.red.shade700),
+              const SizedBox(width: 10),
+              _barButton(Icons.search, 'Find', () => widget.onModeChanged?.call(OperationalMode.find)),
+              _barButton(Icons.sort, 'Sort', hasRecords ? _showSortDialog : null),
+              _barButton(Icons.list_alt, 'Show All', _fetchRecords),
+              const Spacer(),
+              SegmentedButton<String>(
+                segments: const [
+                  ButtonSegment(value: 'form', icon: Icon(Icons.dashboard_outlined, size: 14), label: Text('Form', style: TextStyle(fontSize: 11))),
+                  ButtonSegment(value: 'list', icon: Icon(Icons.view_list_outlined, size: 14), label: Text('List', style: TextStyle(fontSize: 11))),
+                  ButtonSegment(value: 'table', icon: Icon(Icons.table_chart_outlined, size: 14), label: Text('Table', style: TextStyle(fontSize: 11))),
+                ],
+                selected: {_viewMode},
+                onSelectionChanged: (val) => setState(() => _viewMode = val.first),
+                style: SegmentedButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                  padding: const EdgeInsets.symmetric(horizontal: 6),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _barButton(IconData icon, String label, VoidCallback? onPressed, {Color? color}) {
+    return Padding(
+      padding: const EdgeInsets.only(right: 6),
+      child: OutlinedButton.icon(
+        icon: Icon(icon, size: 16, color: onPressed == null ? null : color),
+        label: Text(label, style: TextStyle(color: onPressed == null ? null : color)),
+        style: OutlinedButton.styleFrom(visualDensity: VisualDensity.compact),
+        onPressed: onPressed,
+      ),
+    );
+  }
+
+  // ─── Sort ────────────────────────────────────────────────────────────────
+
+  int _compareValues(dynamic a, dynamic b) {
+    if (a == null || a.toString().isEmpty) return (b == null || b.toString().isEmpty) ? 0 : 1;
+    if (b == null || b.toString().isEmpty) return -1;
+    final na = num.tryParse(a.toString());
+    final nb = num.tryParse(b.toString());
+    if (na != null && nb != null) return na.compareTo(nb);
+    return a.toString().toLowerCase().compareTo(b.toString().toLowerCase());
+  }
+
+  /// Sorts the found set by [field] (null restores the original order),
+  /// keeping the current record selected.
+  void _applySort(String? field, bool ascending) {
+    final currentId = _records.isNotEmpty ? _records[_currentIndex]['id'] : null;
+    final sorted = List.of(_unsortedRecords);
+    if (field != null) {
+      sorted.sort((a, b) => ascending ? _compareValues(a[field], b[field]) : _compareValues(b[field], a[field]));
+    }
+    setState(() {
+      _records = sorted;
+      _sortField = field;
+      _sortAscending = ascending;
+      final idx = _records.indexWhere((r) => r['id'] == currentId);
+      _currentIndex = idx < 0 ? 0 : idx;
+    });
+    _rebuildFieldControllers();
+    widget.onRecordChanged?.call(_currentIndex, _records.length);
+  }
+
+  Future<void> _showSortDialog() async {
+    await _saveCurrentRecord();
+    if (!mounted) return;
+    final cols = widget.table.columns;
+    String? field = _sortField ?? (cols.where((c) => !c.isPrimaryKey).firstOrNull?.name);
+    bool ascending = _sortAscending;
+    final result = await showDialog<String>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDlg) => AlertDialog(
+          title: const Text('Sort Records'),
+          content: SizedBox(
+            width: 320,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                DropdownButtonFormField<String>(
+                  initialValue: field,
+                  decoration: const InputDecoration(labelText: 'Sort by', border: OutlineInputBorder(), isDense: true),
+                  items: cols.map((c) => DropdownMenuItem(value: c.name, child: Text(c.displayName))).toList(),
+                  onChanged: (v) => setDlg(() => field = v),
+                ),
+                const SizedBox(height: 12),
+                SegmentedButton<bool>(
+                  segments: const [
+                    ButtonSegment(value: true, icon: Icon(Icons.arrow_upward, size: 14), label: Text('Ascending')),
+                    ButtonSegment(value: false, icon: Icon(Icons.arrow_downward, size: 14), label: Text('Descending')),
+                  ],
+                  selected: {ascending},
+                  onSelectionChanged: (v) => setDlg(() => ascending = v.first),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.of(ctx).pop('unsort'), child: const Text('Unsort')),
+            TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('Cancel')),
+            FilledButton(onPressed: () => Navigator.of(ctx).pop('sort'), child: const Text('Sort')),
+          ],
+        ),
+      ),
+    );
+    if (result == 'sort' && field != null) _applySort(field, ascending);
+    if (result == 'unsort') _applySort(null, true);
+  }
+
+  // ─── List and Table views ──────────────────────────────────────────────────
+
+  List<ColumnModel> get _visibleColumns => widget.table.columns.where((c) => !c.isPrimaryKey).toList();
+
+  void _openRecordInForm(int index) {
+    _goToRecordIndex(index);
+    setState(() => _viewMode = 'form');
+  }
+
+  Widget _buildListView() {
+    final cols = _visibleColumns;
+    final theme = Theme.of(context);
+    return ListView.separated(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      itemCount: _records.length,
+      separatorBuilder: (_, _) => const Divider(height: 1),
+      itemBuilder: (ctx, i) {
+        final r = _records[i];
+        final values = cols.map((c) => r[c.name]?.toString() ?? '').where((v) => v.isNotEmpty).toList();
+        final title = values.isNotEmpty ? values.first : '(empty record)';
+        final subtitle = values.skip(1).take(4).join(' · ');
+        return ListTile(
+          selected: i == _currentIndex,
+          selectedTileColor: theme.colorScheme.primary.withValues(alpha: 0.08),
+          leading: CircleAvatar(radius: 14, child: Text('${i + 1}', style: const TextStyle(fontSize: 11))),
+          title: Text(title, overflow: TextOverflow.ellipsis),
+          subtitle: subtitle.isEmpty ? null : Text(subtitle, overflow: TextOverflow.ellipsis),
+          trailing: const Icon(Icons.chevron_right, size: 18),
+          onTap: () => _openRecordInForm(i),
+        );
+      },
+    );
+  }
+
+  Widget _buildTableView() {
+    final cols = _visibleColumns;
+    final theme = Theme.of(context);
+    final headerStyle = TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: theme.colorScheme.onSurface);
+    const colWidth = 180.0;
+
+    Widget headerCell(ColumnModel c) {
+      final sorted = _sortField == c.name;
+      return InkWell(
+        onTap: () => _applySort(c.name, sorted ? !_sortAscending : true),
+        child: Container(
+          width: colWidth,
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+          child: Row(
+            children: [
+              Expanded(child: Text(c.displayName, style: headerStyle, overflow: TextOverflow.ellipsis)),
+              if (sorted) Icon(_sortAscending ? Icons.arrow_upward : Icons.arrow_downward, size: 14),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return Scrollbar(
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: SizedBox(
+          width: 56 + cols.length * colWidth,
+          child: Column(
+            children: [
+              Container(
+                color: theme.colorScheme.surfaceContainerHighest,
+                child: Row(children: [
+                  const SizedBox(width: 56, child: Center(child: Text('#', style: TextStyle(fontSize: 12)))),
+                  ...cols.map(headerCell),
+                ]),
+              ),
+              Expanded(
+                child: ListView.builder(
+                  itemCount: _records.length,
+                  itemExtent: 36,
+                  itemBuilder: (ctx, i) {
+                    final r = _records[i];
+                    final selected = i == _currentIndex;
+                    return Material(
+                      color: selected
+                          ? theme.colorScheme.primary.withValues(alpha: 0.10)
+                          : (i.isOdd ? theme.colorScheme.surfaceContainerLowest : Colors.transparent),
+                      child: InkWell(
+                        onTap: () => _goToRecordIndex(i),
+                        onDoubleTap: () => _openRecordInForm(i),
+                        child: Row(children: [
+                          SizedBox(
+                            width: 56,
+                            child: Center(
+                              child: Text('${i + 1}', style: TextStyle(fontSize: 11, color: theme.colorScheme.onSurfaceVariant)),
+                            ),
+                          ),
+                          ...cols.map((c) => Container(
+                                width: colWidth,
+                                padding: const EdgeInsets.symmetric(horizontal: 10),
+                                alignment: Alignment.centerLeft,
+                                child: Text(r[c.name]?.toString() ?? '',
+                                    style: const TextStyle(fontSize: 12), overflow: TextOverflow.ellipsis),
+                              )),
+                        ]),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -763,7 +1044,9 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              // Header banner above canvas
+              // Header banner above canvas (Find mode instructions; the record
+              // bar above shows the record position in Browse mode)
+              if (isFindMode)
               Container(
                 width: canvasWidth,
                 margin: const EdgeInsets.only(bottom: 8),
@@ -1814,5 +2097,44 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
       default:
         return 'e.g. Mario*, =Exact, !=Excluded, * (non-empty)';
     }
+  }
+}
+
+/// Record number box of the Browse record bar: type a number and press Enter
+/// to jump to that record.
+class _RecordNumberField extends StatelessWidget {
+  final TextEditingController controller;
+  final FocusNode focusNode;
+  final bool enabled;
+  final ValueChanged<String> onSubmitted;
+
+  const _RecordNumberField({
+    required this.controller,
+    required this.focusNode,
+    required this.enabled,
+    required this.onSubmitted,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 56,
+      height: 30,
+      child: TextField(
+        controller: controller,
+        focusNode: focusNode,
+        enabled: enabled,
+        textAlign: TextAlign.center,
+        keyboardType: TextInputType.number,
+        inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+        decoration: const InputDecoration(
+          isDense: true,
+          contentPadding: EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+          border: OutlineInputBorder(),
+        ),
+        onSubmitted: onSubmitted,
+      ),
+    );
   }
 }

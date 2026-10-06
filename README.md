@@ -60,7 +60,10 @@ in the database selector. Do not remove a volume to change this behavior unless
 you intend to delete its persisted data.
 
 #### Images and versions
-The images are published on Docker Hub for `linux/amd64` and `linux/arm64`:
+The images are published on Docker Hub for `linux/amd64`, `linux/arm64` and
+`linux/arm/v7`, so they run on macOS and Windows (Docker Desktop, Intel or Apple
+Silicon / ARM), Linux on Intel/AMD or ARM, and Raspberry Pi with a 64-bit or
+32-bit OS:
 [`marioezquerro/file4base-api`](https://hub.docker.com/r/marioezquerro/file4base-api) and
 [`marioezquerro/file4base-web`](https://hub.docker.com/r/marioezquerro/file4base-web),
 tagged with the version in the root `VERSION` file (and `latest`).
