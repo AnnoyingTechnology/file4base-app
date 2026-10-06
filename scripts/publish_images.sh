@@ -3,8 +3,9 @@ set -euo pipefail
 
 # File4Base Docker Image Publishing Script
 #
-# Builds the file4base-api and file4base-web images for linux/amd64 and
-# linux/arm64 and pushes them to Docker Hub, tagged with the version in the
+# Builds the file4base-api and file4base-web images for linux/amd64,
+# linux/arm64 and linux/arm/v7 (macOS and Windows through Docker Desktop,
+# Linux on Intel/AMD and ARM, Raspberry Pi with 64-bit or 32-bit OS) and pushes them to Docker Hub, tagged with the version in the
 # root `VERSION` file and with `latest`.
 #
 #   docker login                    # once, with the Docker Hub account
@@ -12,14 +13,14 @@ set -euo pipefail
 #
 # Environment overrides:
 #   FILE4BASE_REGISTRY  Docker Hub namespace (default: marioezquerro)
-#   PLATFORMS           Target platforms (default: linux/amd64,linux/arm64)
+#   PLATFORMS           Target platforms (default: linux/amd64,linux/arm64,linux/arm/v7)
 #   NO_LATEST=1         Do not move the `latest` tag (e.g. for a hotfix of an older release)
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 VERSION="$(tr -d '[:space:]' < "${ROOT_DIR}/VERSION")"
 REGISTRY="${FILE4BASE_REGISTRY:-marioezquerro}"
-PLATFORMS="${PLATFORMS:-linux/amd64,linux/arm64}"
+PLATFORMS="${PLATFORMS:-linux/amd64,linux/arm64,linux/arm/v7}"
 BUILDER="file4base-builder"
 
 if ! [[ "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then

@@ -1343,7 +1343,6 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                       client,
                       databaseName: _activeDatabaseName,
                     );
-                    await _layoutDesignerKey.currentState?.reloadScripts();
                   },
                   onScriptWorkspace: () async {
                     if (_currentUser == null) {
@@ -1356,7 +1355,6 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                       client,
                       databaseName: _activeDatabaseName,
                     );
-                    await _layoutDesignerKey.currentState?.reloadScripts();
                   },
                   onManageThemes: () => ManageThemesDialog.show(context),
                   onOpenRemote: () {
@@ -1385,7 +1383,8 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                   onExportRecords: _handleExportRecords,
                   onSaveLayout: () => _layoutDesignerKey.currentState?.saveLayout(),
                   onNewRecord: () => _dataBrowserKey.currentState?.createNewRecord(),
-                  onDuplicateRecord: () => _dataBrowserKey.currentState?.createNewRecord(),
+                  onDuplicateRecord: () => _dataBrowserKey.currentState?.duplicateRecord(),
+                  onSortRecords: mode == OperationalMode.browse ? () => _dataBrowserKey.currentState?.sortRecords() : null,
                   onDeleteRecord: () => _dataBrowserKey.currentState?.deleteCurrentRecord(),
                   onShowAllRecords: () {
                     _changeMode(OperationalMode.browse);

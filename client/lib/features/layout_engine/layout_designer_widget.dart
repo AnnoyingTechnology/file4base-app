@@ -5,9 +5,10 @@ import 'package:flutter/gestures.dart' show DragStartBehavior, kDoubleTapTimeout
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../core/api/api_client.dart';
-import '../../core/models/script_models.dart';
 import '../../core/services/solution_storage.dart';
 import '../../core/widgets/file4base_status_sidebar.dart' show LayoutTool;
+import 'button_setup_dialog.dart';
+import 'layout_action_runner.dart';
 import 'layout_object_visuals.dart';
 import '../schema_manager/manage_database_dialog.dart';
 import '../theme_manager/manage_themes_dialog.dart';
@@ -155,11 +156,6 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
   // Set Tab Order mode: objects clicked so far, in order
   final List<String> _tabSequence = [];
 
-  // Scripts available for button actions (loaded on demand, reloaded when a
-  // button is selected and when the Script Workspace closes)
-  List<ScriptModel>? _scripts;
-  bool _loadingScripts = false;
-  String? _scriptsError;
 
   // Line width for new drawings (status sidebar stroke control)
   double _defaultStrokeWidth = 1.0;
@@ -947,10 +943,14 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
     _lastTapObjectId = obj.id;
     _lastTapTime = now;
     if (_editingTextObjectId != null && _editingTextObjectId != obj.id) _commitInlineEdit();
-    final selectionChanged = _selectedObjectId != obj.id;
     setState(() => _selectedObjectId = obj.id);
-    if (selectionChanged && (obj.type == 'button' || obj.type == 'popover_button')) reloadScripts();
-    if (isDoubleClick) _startInlineEdit(obj);
+    if (isDoubleClick) {
+      if (_isButton(obj)) {
+        _openButtonSetup(obj);
+      } else {
+        _startInlineEdit(obj);
+      }
+    }
   }
 
   // ─── Set Tab Order ─────────────────────────────────────────────────────────
@@ -1163,37 +1163,81 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
     if (picked != null) insertText(LayoutMergeSymbols.field(picked));
   }
 
-  Future<void> _loadScripts({bool force = false}) async {
-    if (_loadingScripts || (_scripts != null && !force)) return;
-    setState(() => _loadingScripts = true);
-    try {
-      final list = await widget.apiClient.listScripts();
-      list.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
-      if (mounted) {
-        setState(() {
-          _scripts = list;
-          _scriptsError = null;
-        });
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() {
-          _scripts = const [];
-          _scriptsError = 'Could not load scripts: $e';
-        });
-      }
-    } finally {
-      if (mounted) setState(() => _loadingScripts = false);
-    }
-  }
-
-  /// Reloads the scripts offered to buttons (after scripts were created or
-  /// renamed in the Script Workspace).
-  Future<void> reloadScripts() => _loadScripts(force: true);
-
   Future<void> _openScriptWorkspace() async {
     await widget.onManageScripts?.call();
-    if (mounted) await reloadScripts();
+  }
+
+  static bool _isButton(LayoutObjectModel o) => o.type == 'button' || o.type == 'popover_button';
+
+  /// Button Setup: label and click action of a button (double click, Enter,
+  /// context menu or the inspector).
+  Future<void> _openButtonSetup(LayoutObjectModel button) async {
+    _commitInlineEdit();
+    final updated = await ButtonSetupDialog.show(
+      context,
+      button: button,
+      apiClient: widget.apiClient,
+      layoutNames: widget.layouts.map((l) => l.name).toList(),
+      columns: _currentTable.columns,
+      contextTable: _currentTable.name,
+      onOpenScriptWorkspace: widget.onManageScripts == null ? null : _openScriptWorkspace,
+    );
+    if (updated == null || !mounted) return;
+    _pushUndoState();
+    _updateSelected(updated);
+    _canvasFocus.requestFocus();
+  }
+
+  Future<void> _showObjectContextMenu(LayoutObjectModel obj, Offset globalPosition) async {
+    setState(() => _selectedObjectId = obj.id);
+    final overlay = Overlay.of(context).context.findRenderObject() as RenderBox;
+    final choice = await showMenu<String>(
+      context: context,
+      position: RelativeRect.fromRect(globalPosition & const Size(1, 1), Offset.zero & overlay.size),
+      items: [
+        if (_isButton(obj))
+          const PopupMenuItem(
+            value: 'setup',
+            child: ListTile(dense: true, leading: Icon(Icons.smart_button, size: 18), title: Text('Button Setup...')),
+          ),
+        if (obj.hasEditableText)
+          const PopupMenuItem(
+            value: 'text',
+            child: ListTile(dense: true, leading: Icon(Icons.edit, size: 18), title: Text('Edit text')),
+          ),
+        const PopupMenuItem(
+          value: 'duplicate',
+          child: ListTile(dense: true, leading: Icon(Icons.copy, size: 18), title: Text('Duplicate')),
+        ),
+        const PopupMenuItem(
+          value: 'front',
+          child: ListTile(dense: true, leading: Icon(Icons.flip_to_front, size: 18), title: Text('Bring to front')),
+        ),
+        const PopupMenuItem(
+          value: 'back',
+          child: ListTile(dense: true, leading: Icon(Icons.flip_to_back, size: 18), title: Text('Send to back')),
+        ),
+        const PopupMenuItem(
+          value: 'delete',
+          child: ListTile(
+              dense: true, leading: Icon(Icons.delete_outline, size: 18, color: Colors.red), title: Text('Delete')),
+        ),
+      ],
+    );
+    switch (choice) {
+      case 'setup':
+        await _openButtonSetup(obj);
+      case 'text':
+        _startInlineEdit(obj);
+      case 'duplicate':
+        _duplicateSelectedObject();
+      case 'front':
+        _bringToFront();
+      case 'back':
+        _sendToBack();
+      case 'delete':
+        _deleteSelectedObject();
+    }
   }
 
   // ─── Dialogs ───────────────────────────────────────────────────────────────
@@ -1393,6 +1437,8 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
             } else {
               setState(() => _selectedObjectId = null);
             }
+          } else if (event.logicalKey == LogicalKeyboardKey.enter && _selectedObject != null && _isButton(_selectedObject!)) {
+            _openButtonSetup(_selectedObject!);
           } else if (event.logicalKey == LogicalKeyboardKey.enter && _selectedObject?.hasEditableText == true) {
             _startInlineEdit(_selectedObject!);
           } else if (event.logicalKey == LogicalKeyboardKey.keyD &&
@@ -2770,6 +2816,7 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTap: () => _onObjectTap(obj),
+        onSecondaryTapDown: (d) => _showObjectContextMenu(obj, d.globalPosition),
         onPanStart: (details) {
           if (_activeTool != LayoutTool.pointer || _editingTextObjectId == obj.id) return;
           _pushUndoState();
@@ -2818,15 +2865,34 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
                   ),
                 ),
               ),
-            // Button action / media markers
-            if (obj.action != null && (obj.type == 'button' || obj.type == 'popover_button'))
+            // What the button runs, shown under it (Layout mode only)
+            if (_isButton(obj))
               Positioned(
-                right: 2,
-                top: 2,
+                left: 0,
+                top: obj.height + 3,
                 child: IgnorePointer(
-                  child: Tooltip(
-                    message: _describeAction(obj.action!),
-                    child: const Icon(Icons.bolt, size: 12, color: Color(0xFFFFD54F)),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                    decoration: BoxDecoration(
+                      color: obj.action == null ? const Color(0xFFF5F5F5) : const Color(0xFFE3F2FD),
+                      borderRadius: BorderRadius.circular(3),
+                      border: Border.all(color: obj.action == null ? Colors.black12 : const Color(0xFF90CAF9)),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(obj.action == null ? Icons.touch_app_outlined : Icons.play_arrow,
+                            size: 11, color: obj.action == null ? Colors.grey : const Color(0xFF1565C0)),
+                        const SizedBox(width: 3),
+                        Text(
+                          obj.action == null ? 'No action (double click to set up)' : describeButtonAction(obj.action!),
+                          style: TextStyle(
+                            fontSize: 10,
+                            color: obj.action == null ? Colors.grey.shade600 : const Color(0xFF1565C0),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),
@@ -3917,251 +3983,43 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
     );
   }
 
-  /// Steps a button can run directly (single step action). Parameters use the
-  /// same names as the Script Workspace steps.
-  static const _buttonSteps = <String, String>{
-    'new_record': 'New Record',
-    'duplicate_record': 'Duplicate Record',
-    'delete_record': 'Delete Record',
-    'commit_records': 'Commit (Save) Record',
-    'revert_record': 'Revert Record',
-    'go_to_record': 'Go to Record',
-    'enter_find_mode': 'Enter Find Mode',
-    'perform_find': 'Perform Find',
-    'show_all_records': 'Show All Records',
-    'enter_preview_mode': 'Enter Preview Mode',
-    'go_to_layout': 'Go to Layout',
-    'set_field': 'Set Field',
-    'show_dialog': 'Show Custom Dialog',
-    'open_url': 'Open URL',
-  };
-
-  String _describeAction(ButtonActionModel a) {
-    if (a.isPerformScript) {
-      final p = a.parameter?.isNotEmpty == true ? ' ("${a.parameter}")' : '';
-      return 'Perform Script: ${a.scriptName ?? a.scriptId ?? '?'}$p';
-    }
-    final label = _buttonSteps[a.stepType] ?? a.stepType ?? '?';
-    final detail = switch (a.stepType) {
-      'go_to_record' => ' [${a.params['target'] ?? 'next'}]',
-      'go_to_layout' => ' [${a.params['layout_name'] ?? ''}]',
-      'set_field' => ' [${a.params['field'] ?? ''}]',
-      'open_url' => ' [${a.params['url'] ?? ''}]',
-      _ => '',
-    };
-    return '$label$detail';
-  }
-
   List<Widget> _buttonActionSection(LayoutObjectModel sel, bool isDark) {
     final action = sel.action;
-    final kind = action == null ? 'none' : (action.isPerformScript ? 'perform_script' : 'single_step');
-
-    void setAction(ButtonActionModel? a) {
-      _pushUndoState();
-      _updateSelected(a == null ? sel.copyWith(clearAction: true) : sel.copyWith(action: a));
-    }
-
-    void setParam(String key, String value) {
-      final params = Map<String, dynamic>.from(action?.params ?? const {});
-      params[key] = value;
-      setAction(ButtonActionModel.singleStep(action!.stepType!, params: params));
-    }
-
-    if (kind == 'perform_script' && _scripts == null && !_loadingScripts) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) _loadScripts();
-      });
-    }
-    final scripts = _scripts ?? const <ScriptModel>[];
-
     return [
       _inspectorSectionTitle('BUTTON ACTION'),
-      const Text('What a click runs in Browse mode.', style: TextStyle(fontSize: 10, color: Colors.grey)),
-      const SizedBox(height: 8),
-      DropdownButtonFormField<String>(
-        key: ValueKey('${sel.id}-action-kind'),
-        value: kind,
-        decoration: const InputDecoration(labelText: 'Action', border: OutlineInputBorder(), isDense: true),
-        items: const [
-          DropdownMenuItem(value: 'none', child: Text('Do nothing', style: TextStyle(fontSize: 11))),
-          DropdownMenuItem(value: 'single_step', child: Text('Single step', style: TextStyle(fontSize: 11))),
-          DropdownMenuItem(value: 'perform_script', child: Text('Perform Script', style: TextStyle(fontSize: 11))),
-        ],
-        onChanged: (v) {
-          if (v == null || v == kind) return;
-          switch (v) {
-            case 'none':
-              setAction(null);
-            case 'single_step':
-              setAction(const ButtonActionModel.singleStep('new_record'));
-            case 'perform_script':
-              reloadScripts();
-              setAction(const ButtonActionModel(type: 'perform_script'));
-          }
-        },
-      ),
-      const SizedBox(height: 10),
-      if (kind == 'single_step') ...[
-        DropdownButtonFormField<String>(
-          key: ValueKey('${sel.id}-action-step'),
-          value: _buttonSteps.containsKey(action!.stepType) ? action.stepType : null,
-          isExpanded: true,
-          decoration: const InputDecoration(labelText: 'Step', border: OutlineInputBorder(), isDense: true),
-          items: _buttonSteps.entries
-              .map((e) => DropdownMenuItem(value: e.key, child: Text(e.value, style: const TextStyle(fontSize: 11))))
-              .toList(),
-          onChanged: (v) {
-            if (v == null) return;
-            final defaults = <String, dynamic>{
-              'go_to_record': {'target': 'next'},
-              'show_dialog': {'title': 'Message', 'message': ''},
-              'set_field': {'field': '', 'value': ''},
-              'go_to_layout': {'layout_name': ''},
-              'open_url': {'url': 'https://'},
-            };
-            setAction(ButtonActionModel.singleStep(v,
-                params: Map<String, dynamic>.from(defaults[v] as Map? ?? const {})));
-          },
+      Container(
+        padding: const EdgeInsets.all(10),
+        decoration: BoxDecoration(
+          color: action == null
+              ? (isDark ? const Color(0xFF2C323D) : Colors.grey.shade100)
+              : const Color(0xFF1E88E5).withValues(alpha: 0.10),
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(color: action == null ? Colors.black12 : const Color(0xFF90CAF9)),
         ),
-        const SizedBox(height: 8),
-        ..._stepParamFields(sel, action, setParam),
-      ],
-      if (kind == 'perform_script') ...[
-        if (_loadingScripts)
-          const Padding(padding: EdgeInsets.all(8), child: LinearProgressIndicator())
-        else
-          DropdownButtonFormField<String>(
-            key: ValueKey('${sel.id}-action-script-${scripts.length}'),
-            value: scripts.any((sc) => sc.id == action!.scriptId) ? action!.scriptId : null,
-            isExpanded: true,
-            decoration: InputDecoration(
-              labelText: 'Script',
-              border: const OutlineInputBorder(),
-              isDense: true,
-              helperText: _scriptsError ??
-                  (scripts.isEmpty ? 'No scripts yet. Create one in the Script Workspace.' : null),
-              helperMaxLines: 3,
-              helperStyle: const TextStyle(fontSize: 10),
-            ),
-            items: scripts
-                .map((sc) => DropdownMenuItem(value: sc.id, child: Text(sc.name, style: const TextStyle(fontSize: 11))))
-                .toList(),
-            onChanged: (id) {
-              final sc = scripts.where((x) => x.id == id).firstOrNull;
-              if (sc != null) {
-                setAction(ButtonActionModel.performScript(id: sc.id, name: sc.name, parameter: action!.parameter));
-              }
-            },
-          ),
-        const SizedBox(height: 8),
-        _InspectorTextField(
-          key: ValueKey('${sel.id}-action-param'),
-          value: action!.parameter ?? '',
-          label: 'Script parameter (optional)',
-          onSubmitted: (v) => setAction(ButtonActionModel(
-            type: 'perform_script',
-            scriptId: action.scriptId,
-            scriptName: action.scriptName,
-            parameter: v.trim().isEmpty ? null : v.trim(),
-          )),
-        ),
-        const SizedBox(height: 8),
-        Wrap(
-          spacing: 6,
+        child: Row(
           children: [
-            _actionBtn(Icons.code, 'Script Workspace...', _openScriptWorkspace),
-            _actionBtn(Icons.refresh, 'Reload scripts', () => _loadScripts(force: true)),
+            Icon(action == null ? Icons.touch_app_outlined : Icons.play_arrow,
+                size: 18, color: action == null ? Colors.grey : const Color(0xFF1565C0)),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                action == null ? 'Clicking this button does nothing yet.' : describeButtonAction(action),
+                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+              ),
+            ),
           ],
         ),
-      ],
-      if (action != null && (kind != 'perform_script' || action.scriptId != null))
-        Padding(
-          padding: const EdgeInsets.only(top: 10),
-          child: Row(
-            children: [
-              const Icon(Icons.bolt, size: 14, color: Color(0xFFF59E0B)),
-              const SizedBox(width: 4),
-              Expanded(
-                child: Text(_describeAction(action),
-                    style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600)),
-              ),
-            ],
-          ),
-        ),
+      ),
+      const SizedBox(height: 10),
+      FilledButton.icon(
+        icon: const Icon(Icons.smart_button, size: 16),
+        label: const Text('Button Setup...'),
+        onPressed: () => _openButtonSetup(sel),
+      ),
+      const SizedBox(height: 6),
+      const Text('Assign a script or a step. Also: double click the button, or right click > Button Setup.',
+          style: TextStyle(fontSize: 10, color: Colors.grey)),
     ];
-  }
-
-  List<Widget> _stepParamFields(
-      LayoutObjectModel sel, ButtonActionModel action, void Function(String key, String value) setParam) {
-    String p(String key) => action.params[key]?.toString() ?? '';
-    Widget text(String key, String label) => Padding(
-          padding: const EdgeInsets.only(bottom: 8),
-          child: _InspectorTextField(
-            key: ValueKey('${sel.id}-param-${action.stepType}-$key'),
-            value: p(key),
-            label: label,
-            onSubmitted: (v) => setParam(key, v),
-          ),
-        );
-
-    switch (action.stepType) {
-      case 'go_to_record':
-        const targets = {'first': 'First', 'previous': 'Previous', 'next': 'Next', 'last': 'Last'};
-        final current = p('target').toLowerCase();
-        return [
-          DropdownButtonFormField<String>(
-            key: ValueKey('${sel.id}-param-target'),
-            value: targets.containsKey(current) ? current : 'next',
-            decoration: const InputDecoration(labelText: 'Record', border: OutlineInputBorder(), isDense: true),
-            items: targets.entries
-                .map((e) => DropdownMenuItem(value: e.key, child: Text(e.value, style: const TextStyle(fontSize: 11))))
-                .toList(),
-            onChanged: (v) {
-              if (v != null) setParam('target', v);
-            },
-          ),
-        ];
-      case 'go_to_layout':
-        final names = widget.layouts.map((l) => l.name).toList();
-        return [
-          DropdownButtonFormField<String>(
-            key: ValueKey('${sel.id}-param-layout'),
-            value: names.contains(p('layout_name')) ? p('layout_name') : null,
-            isExpanded: true,
-            decoration: const InputDecoration(labelText: 'Layout', border: OutlineInputBorder(), isDense: true),
-            items: names
-                .map((n) => DropdownMenuItem(value: n, child: Text(n, style: const TextStyle(fontSize: 11))))
-                .toList(),
-            onChanged: (v) {
-              if (v != null) setParam('layout_name', v);
-            },
-          ),
-        ];
-      case 'set_field':
-        final cols = _currentTable.columns.where((c) => !c.isPrimaryKey).toList();
-        return [
-          DropdownButtonFormField<String>(
-            key: ValueKey('${sel.id}-param-field'),
-            value: cols.any((c) => c.name == p('field')) ? p('field') : null,
-            isExpanded: true,
-            decoration: const InputDecoration(labelText: 'Field', border: OutlineInputBorder(), isDense: true),
-            items: cols
-                .map((c) => DropdownMenuItem(value: c.name, child: Text(c.displayName, style: const TextStyle(fontSize: 11))))
-                .toList(),
-            onChanged: (v) {
-              if (v != null) setParam('field', v);
-            },
-          ),
-          const SizedBox(height: 8),
-          text('value', 'Value (text, {{field}} or {{CurrentDate}})'),
-        ];
-      case 'show_dialog':
-        return [text('title', 'Title'), text('message', 'Message')];
-      case 'open_url':
-        return [text('url', 'URL')];
-      default:
-        return const [];
-    }
   }
 
   // Tab 3: Typography & Text

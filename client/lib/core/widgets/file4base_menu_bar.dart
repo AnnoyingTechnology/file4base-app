@@ -29,6 +29,7 @@ class File4BaseMenuBar extends StatelessWidget {
   final VoidCallback? onNewRecord;
   final VoidCallback? onDuplicateRecord;
   final VoidCallback? onDeleteRecord;
+  final VoidCallback? onSortRecords;
   final VoidCallback? onShowAllRecords;
   final VoidCallback? onPerformFind;
   final VoidCallback? onSaveLayout;
@@ -82,6 +83,7 @@ class File4BaseMenuBar extends StatelessWidget {
     this.onNewRecord,
     this.onDuplicateRecord,
     this.onDeleteRecord,
+    this.onSortRecords,
     this.onShowAllRecords,
     this.onPerformFind,
     this.onSaveLayout,
@@ -819,7 +821,7 @@ class File4BaseMenuBar extends StatelessWidget {
         ),
         const Divider(height: 1),
         MenuItemButton(
-          onPressed: () => _showNotice(context, 'Sort Records', 'Define multi-column ordering.'),
+          onPressed: onSortRecords ?? () => _showNotice(context, 'Sort Records', 'Define multi-column ordering.'),
           shortcut: const SingleActivator(LogicalKeyboardKey.keyS, meta: true),
           child: const Text('Sort Records...'),
         ),

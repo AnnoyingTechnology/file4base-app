@@ -124,8 +124,10 @@ class _File4BaseStatusSidebarState extends State<File4BaseStatusSidebar> {
         children: [
           _buildLayoutSelector(context, isDark, borderColor),
           const SizedBox(height: 8),
+          // Browse mode: record navigation lives in the record bar above the
+          // layout, so the sidebar only offers the layout selector.
           if (widget.mode == OperationalMode.browse)
-            _buildBrowseNavigator(context, isDark)
+            const SizedBox.shrink()
           else if (widget.mode == OperationalMode.find)
             _buildFindNavigator(context, isDark)
           else if (widget.mode == OperationalMode.layout)
@@ -285,131 +287,6 @@ class _File4BaseStatusSidebarState extends State<File4BaseStatusSidebar> {
                 }
               },
             ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // ─── Browse Mode ─────────────────────────────────────────────────────────────
-
-  Widget _buildBrowseNavigator(BuildContext context, bool isDark) {
-    final recordNumber =
-        widget.totalRecords > 0 ? widget.currentRecordIndex + 1 : 0;
-
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 8.0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: [
-          Tooltip(
-            message: 'Click top half for previous, bottom half for next',
-            child: GestureDetector(
-              onTapUp: (details) {
-                if (details.localPosition.dy < 24) {
-                  widget.onPreviousRecord();
-                } else {
-                  widget.onNextRecord();
-                }
-              },
-              child: CustomPaint(
-                size: const Size(64, 48),
-                painter:
-                    _File4BaseBookPainter(isDark: isDark, hasBookmark: true),
-              ),
-            ),
-          ),
-          const SizedBox(height: 4),
-          Container(
-            width: 48,
-            padding: const EdgeInsets.symmetric(vertical: 2),
-            decoration: BoxDecoration(
-              color: isDark ? const Color(0xFF272D37) : Colors.white,
-              border: Border.all(
-                color: isDark
-                    ? const Color(0xFF4A5568)
-                    : const Color(0xFF9E9E9E),
-              ),
-              borderRadius: BorderRadius.circular(2),
-            ),
-            child: Text(
-              '$recordNumber',
-              textAlign: TextAlign.center,
-              style: const TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.bold,
-                  fontFamily: 'monospace'),
-            ),
-          ),
-          const SizedBox(height: 6),
-          if (widget.totalRecords > 1)
-            SizedBox(
-              height: 24,
-              child: SliderTheme(
-                data: SliderThemeData(
-                  trackHeight: 2,
-                  thumbShape:
-                      const RoundSliderThumbShape(enabledThumbRadius: 5),
-                  overlayShape:
-                      const RoundSliderOverlayShape(overlayRadius: 10),
-                  activeTrackColor: const Color(0xFF1E88E5),
-                  inactiveTrackColor:
-                      isDark ? Colors.white24 : Colors.black12,
-                  thumbColor: const Color(0xFF1E88E5),
-                ),
-                child: Slider(
-                  value: widget.currentRecordIndex
-                      .toDouble()
-                      .clamp(0.0, (widget.totalRecords - 1).toDouble()),
-                  min: 0,
-                  max: (widget.totalRecords - 1).toDouble(),
-                  onChanged: (val) => widget.onGoToRecord(val.round()),
-                ),
-              ),
-            ),
-          const SizedBox(height: 6),
-          Align(
-            alignment: Alignment.centerLeft,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text('Records:',
-                    style:
-                        TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
-                Text('${widget.totalRecords}',
-                    style: const TextStyle(
-                        fontSize: 12, fontWeight: FontWeight.w600)),
-                const SizedBox(height: 8),
-                Text(widget.isUnsorted ? 'Unsorted' : 'Sorted',
-                    style:
-                        const TextStyle(fontSize: 11, color: Colors.grey)),
-              ],
-            ),
-          ),
-          const SizedBox(height: 12),
-          const Divider(height: 1),
-          const SizedBox(height: 8),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-            children: [
-              IconButton(
-                visualDensity: VisualDensity.compact,
-                padding: EdgeInsets.zero,
-                iconSize: 18,
-                icon: const Icon(Icons.add_circle_outline),
-                tooltip: 'New Record',
-                onPressed: widget.onNewRecord,
-              ),
-              IconButton(
-                visualDensity: VisualDensity.compact,
-                padding: EdgeInsets.zero,
-                iconSize: 18,
-                icon: const Icon(Icons.delete_outline),
-                tooltip: 'Delete Record',
-                onPressed:
-                    widget.totalRecords > 0 ? widget.onDeleteRecord : null,
-              ),
-            ],
           ),
         ],
       ),
